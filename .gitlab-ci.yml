@@ -1,0 +1,20 @@
+image: nixos/nix
+
+variables:
+  NIXOS_VERSION: "nixos-25.05-small"
+
+stages:
+  - check
+
+linters:
+  stage: check
+  before_script:
+    - nix-channel --add https://nixos.org/channels/${NIXOS_VERSION} nixos
+    - nix-channel --update
+    - nix-env -iA nixpkgs.deadnix nixpkgs.statix nixpkgs.flake-checker nixpkgs.vulnix
+  script:
+    - statix check || true
+    - deadnix || true
+    - flake-checker || true
+    # - vulnix --system
+
