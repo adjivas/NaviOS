@@ -1,0 +1,37 @@
+[Unit]
+After=sockets.target
+Description=microVM Application runner
+OnFailure=exit.target
+OnSuccess=exit.target
+Wants=sockets.target
+
+[Service]
+Type=exec
+# Environment="LOCALE_ARCHIVE=/nix/store/1hilqf0v1nm2w8xj87pwpm0rgq6lvhlv-glibc-locales-2.42-47/lib/locale/locale-archive"
+# Environment="TZDIR=/nix/store/80izpiglrlqv2zb7rd7m5274k2dr142l-tzdata-2025c/share/zoneinfo"
+Environment=WAYLAND_DISPLAY=wayland-1
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/vm-user/dbus.sock
+Environment=PATH=/run/current-system/sw/bin
+PassEnvironment=MESA_LOADER_DRIVER_OVERRIDE
+PassEnvironment=MUVM_REMOTE_CONFIG
+PassEnvironment=TERM
+PassEnvironment=XDG_SESSION_TYPE
+PassEnvironment=SDL_VIDEODRIVER
+PassEnvironment=SDL_AUDIO_DRIVER
+PassEnvironment=QT_QPA_PLATFORM
+PassEnvironment=_JAVA_AWT_WM_NONREPARENTING
+PassEnvironment=ELECTRON_OZONE_PLATFORM_HINT
+PassEnvironment=GTK_USE_PORTAL
+PassEnvironment=QT_QPA_PLATFORMTHEME
+# have to do pulse like this since there's no way to specify the
+# subdir owner when it's autocreated for a socket https://github.com/systemd/systemd/issues/4497
+ExecStartPre=+/run/current-system/sw/bin/mkdir -p /run/vm-user/pulse
+ExecStartPre=+/run/current-system/sw/bin/chown appvm:appvm /run/vm-user /run/vm-user/pulse
+ExecStart=/opt/bin/muvm-remote
+ExecStopPost=+/opt/bin/micro-activate
+User=appvm
+Group=appvm
+StandardError=tty
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/hvc0

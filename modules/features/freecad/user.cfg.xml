@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FCParameters>
+  <FCParamGroup Name="Root">
+    <FCParamGroup Name="BaseApp">
+      <FCParamGroup Name="Preferences">
+        <FCParamGroup Name="General">
+          <!-- UI language -->
+          <FCText Name="Language">English</FCText>
+
+          <!-- Workbench automatically selected at startup -->
+          <FCText Name="AutoloadModule">PartDesignWorkbench</FCText>
+
+          <!-- Skip the splash screen during startup -->
+          <FCBool Name="ShowSplasher" Value="0"/>
+
+          <!-- Disable floating overlay panels (use docked panels instead) -->
+          <FCBool Name="EnableOverlay" Value="0"/>
+        </FCParamGroup>
+
+        <FCParamGroup Name="MainWindow">
+          <!-- Built-in dark theme -->
+          <FCText Name="Theme">FreeCAD Dark</FCText>
+
+          <!-- Qt stylesheet used by the selected theme -->
+          <FCText Name="StyleSheet">FreeCAD.qss</FCText>
+        </FCParamGroup>
+
+        <FCParamGroup Name="Units">
+          <!-- Unit system: 0 = mm / kg / s (MKS) -->
+          <FCInt Name="UserSchema" Value="0"/>
+
+          <!-- Number of decimal digits displayed -->
+          <FCInt Name="Decimals" Value="2"/>
+        </FCParamGroup>
+
+        <FCParamGroup Name="View">
+          <!-- Gesture navigation -->
+          <FCText Name="NavigationStyle">Gui::GestureNavigationStyle</FCText>
+
+          <!-- Enable Vertex Buffer Objects -->
+          <FCBool Name="UseVBO" Value="1"/>
+
+          <!-- Let FreeCAD and Mesa select a compatible OpenGL profile -->
+          <FCBool Name="UseOpenGLCoreProfile" Value="0"/>
+
+          <!-- Allow software rendering as a fallback while diagnosing the virtual GPU -->
+          <FCBool Name="UseSoftwareOpenGL" Value="1"/>
+
+          <!-- Disable anti-aliasing until EGL works reliably -->
+          <FCInt Name="AntiAliasing" Value="0"/>
+
+          <!-- Use hardware-accelerated object selection -->
+          <FCBool Name="UseSelectionRoot" Value="1"/>
+        </FCParamGroup>
+      </FCParamGroup>
+    </FCParamGroup>
+  </FCParamGroup>
+</FCParameters>

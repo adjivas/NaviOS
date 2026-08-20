@@ -1,0 +1,10 @@
+[Unit]
+Description=PipeWire VM bridge socket
+PartOf=pipewire-bridge.service
+ConditionCredential=!munix.noaudio
+
+[Socket]
+SocketGroup=appvm
+SocketUser=appvm
+Priority=6
+ListenStream=/run/vm-user/pipewire-0

@@ -1,0 +1,20 @@
+[Unit]
+Description=PipeWire PulseAudio bridge
+Requires=pipewire-pulse.socket
+Wants=pipewire-bridge.service dbus.socket
+After=pipewire-bridge.service dbus.socket
+ConditionPathExists=/run/current-system/sw/bin/pipewire-pulse
+ConditionCredential=!munix.noaudio
+
+[Service]
+Type=exec
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/vm-user/dbus.sock
+ExecStart=/run/current-system/sw/bin/pipewire-pulse
+User=appvm
+Group=appvm
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

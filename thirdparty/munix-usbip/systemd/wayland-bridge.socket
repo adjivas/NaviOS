@@ -1,0 +1,9 @@
+[Unit]
+Description=Wayland VM bridge socket
+PartOf=wayland-bridge.service
+
+[Socket]
+FileDescriptorName=wayland
+SocketGroup=appvm
+SocketUser=appvm
+ListenStream=/run/vm-user/wayland-1

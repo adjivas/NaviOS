@@ -1,0 +1,15 @@
+[Unit]
+Description=PipeWire VM bridge
+Requires=pipewire-bridge.socket
+ConditionCredential=!munix.noaudio
+
+[Service]
+Type=exec
+ExecStart=/opt/bin/muvm-pwbridge
+User=appvm
+Group=appvm
+
+# Environment=RUST_LOG=debug
+# StandardError=tty
+# StandardOutput=tty
+# TTYPath=/dev/hvc0
