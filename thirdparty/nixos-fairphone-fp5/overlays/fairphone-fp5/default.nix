@@ -1,0 +1,58 @@
+# Nixpkgs overlay to add custom Fairphone 5 packages.
+final: prev: {
+  # ModemManager with a fix for cleanup of multiplexed bearers.
+  modemmanager = prev.modemmanager.overrideAttrs (old: {
+    patches =
+      (old.patches or [])
+      ++ [
+        (final.fetchpatch {
+          url = "https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/commit/0edcb916ad2b7267caf73bbd9a31e46da0727a00.patch";
+          hash = "sha256-77CkwOWXsiB+1VVID6c0/CSel9IA9UDHarJzhfMygJI=";
+        })
+      ];
+  });
+
+  # Qualcomm firmware squasher to convert split `.mdt` (meta data table) firmware files
+  # to monolithic `.mbn` (multi-binary) format. Note: This is a build-time tool that
+  # runs during firmware preparation (not on the device).
+  pil-squasher = final.callPackage ../../packages/pil-squasher {};
+
+  # ALSA UCM2 profiles for the Fairphone 5 sound card.
+  alsa-ucm-conf-fairphone-fp5 = final.callPackage ../../packages/alsa-ucm-conf-fairphone-fp5 {};
+
+  # WirePlumber configuration for Qualcomm audio on Fairphone 5.
+  wireplumber-config-fairphone-fp5 = final.callPackage ../../packages/wireplumber-config-fairphone-fp5 {};
+
+  # Keep Qualcomm hostless RX/TX voice streams open during calls.
+  dummystreamhack = final.callPackage ../../packages/dummystreamhack {};
+
+  # Firmware package for Fairphone 5.
+  firmware-fairphone-fp5 = final.callPackage ../../packages/firmware {};
+
+  # Custom kernel package for Fairphone 5.
+  kernel-fairphone-fp5 = final.callPackage ../../packages/kernel {};
+
+  # U-Boot configured for the Fairphone 5.
+  uboot-fairphone-fp5 = final.callPackage ../../packages/uboot {};
+
+  # Libcamera with Fairphone 5 sensor metadata and tuning profiles.
+  libcamera = final.callPackage ../../packages/libcamera {};
+
+  # Protection domain mapper for Qualcomm modems.
+  pd-mapper = final.callPackage ../../packages/qrtr/pd-mapper.nix {};
+
+  # QMI IDL compiler (build dependency for rmtfs).
+  qmic = final.callPackage ../../packages/qrtr/qmic.nix {};
+
+  # QRTR (Qualcomm IPC Router) userspace tools.
+  qrtr = final.callPackage ../../packages/qrtr/qrtr.nix {};
+
+  # Remote filesystem service for Qualcomm modems.
+  rmtfs = final.callPackage ../../packages/qrtr/rmtfs.nix {};
+
+  # TFTP server over QRTR for Qualcomm modems.
+  tqftpserv = final.callPackage ../../packages/qrtr/tqftpserv.nix {};
+
+  # Configure MAC addresses at boot for WiFi and Bluetooth.
+  bootmac = final.callPackage ../../packages/bootmac {};
+}

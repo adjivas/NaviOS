@@ -1,0 +1,11 @@
+[Unit]
+Description=PipeWire PulseAudio socket
+PartOf=pipewire-pulse.service
+ConditionPathExists=/run/current-system/sw/bin/pipewire-pulse
+ConditionCredential=!munix.noaudio
+
+[Socket]
+SocketGroup=appvm
+SocketUser=appvm
+Priority=6
+ListenStream=/run/vm-user/pulse/native

@@ -1,0 +1,438 @@
+/*
+ * Australis tabs
+ *
+ * Rules in this file intentionally target only ordinary tabs.
+ * Tabs inside <tab-group> are owned entirely by australisTabGroup.css.
+ */
+
+:root {
+  /* Colors */
+  --australis-active-tab: #0dcdcd;
+  --australis-active-tab-text: #000;
+  --australis-inactive-tab-text: #fff;
+  --australis-tab-hover: rgba(255, 255, 255, 0.10);
+
+  /* Geometry */
+  --australis-tab-height: 27px;
+  --australis-tab-top-offset: 3px;
+  --australis-tab-curve-width: 30px;
+  --australis-tab-wing-width: 38px;
+
+  /* Tab-strip edges:
+   * - edge padding reserves enough room for the Australis wings
+   * - inline margin creates the visible gap against the window edges
+   */
+  --australis-tabstrip-edge-space: 20px;
+  --australis-tabstrip-inline-margin: 12px;
+
+  --tab-min-height: var(--australis-tab-height) !important;
+  --tabstrip-min-height: 0 !important;
+  --tabs-border: transparent !important;
+  --tab-border-radius: 0 !important;
+
+  /* Shared Australis masks. These are also used by tab groups. */
+  --australis-selected-before-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' xmlns:svg='http://www.w3.org/2000/svg' width='30px' height='31px' preserveAspectRatio='none'><defs><svg:clipPath id='tab-curve-clip-path-start' clipPathUnits='objectBoundingBox'><svg:path d='m 1,0.065 0.05,0 0,0.938 -1,0 0,-0.028 C 0.32082458,0.95840561 0.4353096,0.81970962 0.48499998,0.5625 0.51819998,0.3905 0.535,0.0659 1,0.065 z'/></svg:clipPath></defs><foreignObject width='30' height='31' clip-path='url(%23tab-curve-clip-path-start)'><div style='background:black;height:100%;width:100%;' xmlns='http://www.w3.org/1999/xhtml'></div></foreignObject></svg>");
+  --australis-selected-after-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' xmlns:svg='http://www.w3.org/2000/svg' width='30px' height='31px' preserveAspectRatio='none'><defs><svg:clipPath id='tab-curve-clip-path-end' clipPathUnits='objectBoundingBox'><svg:path d='m 0,0.065 -0.05,0 0,0.938 1,0 0,-0.028 C 0.67917542,0.95840561 0.56569036,0.81970962 0.51599998,0.5625 0.48279998,0.3905 0.465,0.0659 0,0.065 z'/></svg:clipPath></defs><foreignObject width='30' height='31' clip-path='url(%23tab-curve-clip-path-end)'><div style='background:black;height:100%;width:100%;' xmlns='http://www.w3.org/1999/xhtml'></div></foreignObject></svg>");
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Strip                                                                        */
+/* -------------------------------------------------------------------------- */
+
+
+#tabbrowser-tabs {
+  border-left-width: 0 !important;
+
+  /* Visible clearance between the entire tab strip and the window edges. */
+  margin-inline: var(--australis-tabstrip-inline-margin) !important;
+}
+
+/*
+ * Reserve real space INSIDE the arrowscrollbox before the first spatial item.
+ *
+ * The Australis background uses negative inline margins, so its wing extends
+ * outside the tab's own box. This margin gives that wing somewhere to exist
+ * without hitting the scrollbox clipping edge.
+ */
+#tabbrowser-arrowscrollbox
+  > :is(.tabbrowser-tab, tab-group):first-child {
+  margin-inline-start: var(--australis-tabstrip-edge-space) !important;
+}
+
+/*
+ * The last tab/group sits immediately before Firefox's periphery node.
+ * Give it the same room on the right for its Australis wing.
+ */
+#tabbrowser-arrowscrollbox
+  > :is(.tabbrowser-tab, tab-group):has(+ #tabbrowser-arrowscrollbox-periphery) {
+  margin-inline-end: var(--australis-tabstrip-edge-space) !important;
+}
+
+.titlebar-placeholder,
+.titlebar-spacer {
+  border: 0 !important;
+}
+
+.tab-line,
+.tab-bottom-line,
+.tab-loading-burst {
+  display: none !important;
+}
+
+#navigator-toolbox {
+  background-color: transparent !important;
+}
+
+
+
+
+/* Hide Firefox's "Drop tab here to pin" drag target. */
+#pinned-drop-indicator {
+  display: none !important;
+}
+
+
+/*
+ * Remove Firefox's right-side tabstrip periphery.
+ * It contains the adjacent new-tab button / closing-tabs spacer and otherwise
+ * reserves empty room at the end of the strip.
+ */
+#tabbrowser-arrowscrollbox-periphery,
+#tabs-newtab-button,
+#tabbrowser-arrowscrollbox-periphery > .closing-tabs-spacer {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Ordinary tabs only                                                           */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * The :not(tab-group > .tabbrowser-tab) guard is deliberate.
+ *
+ * The old stylesheet styled every .tabbrowser-tab, so its normal-tab hover
+ * pseudo-elements were also recreated on grouped tabs. That is what made a
+ * sub-tab's rounded ends change position on hover.
+ */
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab) {
+  height: var(--australis-tab-height) !important;
+  min-height: var(--australis-tab-height) !important;
+  max-height: var(--australis-tab-height) !important;
+
+  margin-top: var(--australis-tab-top-offset) !important;
+  margin-inline-start: 0 !important;
+  padding-inline: 0 !important;
+
+  overflow: visible !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)
+  > .tab-stack,
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)
+  > .tab-stack
+  > .tab-content,
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)
+  > .tab-stack
+  > .tab-background {
+  height: var(--australis-tab-height) !important;
+  min-height: var(--australis-tab-height) !important;
+  max-height: var(--australis-tab-height) !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)
+  > .tab-stack {
+  margin-top: 0 !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)
+  > .tab-stack
+  > .tab-content {
+  padding-block: 0 !important;
+  padding-inline: 15px !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)
+  > .tab-stack
+  > .tab-background {
+  display: flex !important;
+  flex-direction: row !important;
+
+  margin-block: 0 !important;
+  margin-inline: -20px !important;
+
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+
+  background: transparent !important;
+
+  pointer-events: none !important;
+  overflow: visible !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)
+  > .tab-stack
+  > .tab-background
+  > .tab-context-line {
+  flex: 1 !important;
+  height: inherit !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Selected ordinary tab                                                        */
+/* -------------------------------------------------------------------------- */
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)[selected] {
+  /* A flex item can use z-index without being positioned.
+   * Do not force position here: Firefox needs to make the dragged tab absolute. */
+  z-index: 100 !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)[selected]
+  > .tab-stack
+  > .tab-background {
+  background: transparent !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)[selected]
+  > .tab-stack
+  > .tab-background
+  > .tab-context-line {
+  background:
+    linear-gradient(
+      transparent 2px,
+      var(--australis-active-tab) 2px
+    ) !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)[selected]
+  > .tab-stack
+  > .tab-background::before,
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)[selected]
+  > .tab-stack
+  > .tab-background::after {
+  content: "" !important;
+  display: block !important;
+
+  width: var(--australis-tab-wing-width) !important;
+  height: var(--australis-tab-height) !important;
+
+  border: 0 !important;
+  background-color: var(--australis-active-tab) !important;
+
+  pointer-events: none !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)[selected]
+  > .tab-stack
+  > .tab-background::before {
+  mask:
+    var(--australis-selected-before-mask)
+    right top / var(--australis-tab-curve-width) var(--australis-tab-height)
+    no-repeat !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)[selected]
+  > .tab-stack
+  > .tab-background::after {
+  mask:
+    var(--australis-selected-after-mask)
+    left top / var(--australis-tab-curve-width) var(--australis-tab-height)
+    no-repeat !important;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Hovered ordinary tab                                                         */
+/* -------------------------------------------------------------------------- */
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab):not([selected]):hover
+  > .tab-stack
+  > .tab-background {
+  background: transparent !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab):not([selected]):hover
+  > .tab-stack
+  > .tab-background
+  > .tab-context-line {
+  background:
+    linear-gradient(
+      transparent 2px,
+      var(--australis-tab-hover) 2px
+    ) !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab):not([selected]):hover
+  > .tab-stack
+  > .tab-background::before,
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab):not([selected]):hover
+  > .tab-stack
+  > .tab-background::after {
+  content: "" !important;
+  display: block !important;
+
+  width: var(--australis-tab-wing-width) !important;
+  height: var(--australis-tab-height) !important;
+
+  background-color: var(--australis-tab-hover) !important;
+  background-image: none !important;
+
+  pointer-events: none !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab):not([selected]):hover
+  > .tab-stack
+  > .tab-background::before {
+  mask:
+    var(--australis-selected-before-mask)
+    right top / var(--australis-tab-curve-width) var(--australis-tab-height)
+    no-repeat !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab):not([selected]):hover
+  > .tab-stack
+  > .tab-background::after {
+  mask:
+    var(--australis-selected-after-mask)
+    left top / var(--australis-tab-curve-width) var(--australis-tab-height)
+    no-repeat !important;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Text / pinned tabs                                                           */
+/* -------------------------------------------------------------------------- */
+
+.tabbrowser-tab .tab-text {
+  color: var(--australis-inactive-tab-text) !important;
+}
+
+.tabbrowser-tab[selected] .tab-text {
+  color: var(--australis-active-tab-text) !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)[pinned][style^="margin-inline-start"] {
+  padding-left: 12px !important;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)[pinned] {
+  width: 55px;
+}
+
+.tabbrowser-tab:not(tab-group > .tabbrowser-tab)[pinned]
+  > .tab-stack
+  > .tab-content {
+  padding-inline: 20px !important;
+}
+
+.tabbrowser-tab::before,
+.tabbrowser-tab::after {
+  border: 0 !important;
+}
+
+.close-icon:hover {
+  border-radius: 50% !important;
+}
+
+#tabbrowser-tabs[orient="horizontal"]
+  .tabbrowser-tab:not(tab-group > .tabbrowser-tab):not([pinned])[fadein] {
+  min-width: 0 !important;
+}
+
+:root:window-inactive
+  .tabbrowser-tab:not(tab-group > .tabbrowser-tab)[selected]
+  > .tab-stack
+  > .tab-background {
+  background-color: var(--tab-selected-bgcolor) !important;
+}
+
+
+
+
+/* -------------------------------------------------------------------------- */
+/* New-tab button                                                               */
+/* -------------------------------------------------------------------------- */
+
+#new-tab-button > .toolbarbutton-icon,
+#tabs-newtab-button > .toolbarbutton-icon {
+  fill: rgb(249, 249, 250) !important;
+}
+
+#tabs-newtab-button {
+  position: relative !important;
+
+  width: 36px !important;
+  min-width: 36px !important;
+  height: var(--australis-tab-height) !important;
+  min-height: var(--australis-tab-height) !important;
+  max-height: var(--australis-tab-height) !important;
+
+  margin: 0 22px !important;
+  padding: 0 !important;
+
+  background: transparent !important;
+  overflow: visible !important;
+
+  z-index: 2 !important;
+}
+
+#tabs-newtab-button > .toolbarbutton-icon {
+  position: relative !important;
+  background: transparent !important;
+  background-image: none !important;
+  z-index: 2 !important;
+}
+
+#tabs-newtab-button:hover {
+  background: var(--australis-tab-hover) !important;
+  border-radius: 0 !important;
+}
+
+#tabs-newtab-button:hover::before,
+#tabs-newtab-button:hover::after {
+  content: "" !important;
+  display: block !important;
+  position: absolute !important;
+  top: 0 !important;
+
+  width: 22px !important;
+  height: var(--australis-tab-height) !important;
+
+  background-color: var(--australis-tab-hover) !important;
+  pointer-events: none !important;
+
+  z-index: 1 !important;
+}
+
+#tabs-newtab-button:hover::before {
+  left: -22px !important;
+  mask:
+    var(--australis-selected-before-mask)
+    right top / 22px var(--australis-tab-height)
+    no-repeat !important;
+}
+
+#tabs-newtab-button:hover::after {
+  right: -22px !important;
+  mask:
+    var(--australis-selected-after-mask)
+    left top / 22px var(--australis-tab-height)
+    no-repeat !important;
+}
+
+#tabs-newtab-button:hover > .toolbarbutton-icon {
+  background: transparent !important;
+  background-image: none !important;
+}

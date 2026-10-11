@@ -1,0 +1,136 @@
+{
+  "nodes": {
+    "flake-parts": {
+      "inputs": {
+        "nixpkgs-lib": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1778716662,
+        "narHash": "sha256-m1Yf0wZ8j1OHjTc2UwHwyQRSnNeSgLJOd7q5Y45hzi4=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "f7c1a2d347e4c52d5fb8d10cb4d94b5884e546fb",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "type": "github"
+      }
+    },
+    "libkrun-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780628108,
+        "narHash": "sha256-EhYnN5Ne1EsyyvIC9F/lrYLYwzhxVeFySQZ7G3lbTNw=",
+        "owner": "valpackett",
+        "repo": "libkrun",
+        "rev": "f70dcf152e706429c84285a58107a255efc9a813",
+        "type": "github"
+      },
+      "original": {
+        "owner": "valpackett",
+        "repo": "libkrun",
+        "rev": "f70dcf152e706429c84285a58107a255efc9a813",
+        "type": "github"
+      }
+    },
+    "muvm-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780628452,
+        "narHash": "sha256-Iog/h51Si3f+tUg2KNqHwxWjWtoeEV3udu61gOWyCkQ=",
+        "owner": "valpackett",
+        "repo": "muvm",
+        "rev": "5107ba4170b1e23c6661dbf86d1311d621a928ae",
+        "type": "github"
+      },
+      "original": {
+        "owner": "valpackett",
+        "repo": "muvm",
+        "rev": "5107ba4170b1e23c6661dbf86d1311d621a928ae",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1783776592,
+        "narHash": "sha256-UgCQzxeWI75XM8G+hPrPh+MKzEPjG3SpAj7dtqSbksA=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "e7a3ca8092b61ff85b6a45bf863ea2b2d6a661b3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "flake-parts": "flake-parts",
+        "libkrun-src": "libkrun-src",
+        "muvm-src": "muvm-src",
+        "nixpkgs": "nixpkgs",
+        "sidebus": "sidebus",
+        "wl-backdrop": "wl-backdrop"
+      }
+    },
+    "sidebus": {
+      "inputs": {
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1779855965,
+        "narHash": "sha256-EfTDIIulXSvuusXC2agACcg91XjOtoEsBoJh0R/nm5E=",
+        "ref": "main",
+        "rev": "b8052f17dcb1e01b2ae67ec3e0709cb2e1f5869b",
+        "shallow": true,
+        "type": "git",
+        "url": "https://git.clan.lol/clan/sidebus"
+      },
+      "original": {
+        "ref": "main",
+        "shallow": true,
+        "type": "git",
+        "url": "https://git.clan.lol/clan/sidebus"
+      }
+    },
+    "wl-backdrop": {
+      "inputs": {
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1773997786,
+        "narHash": "sha256-+z7/nTyXK/tpcWEhdtleCfR76Q1+NWIL/P8NlKgkDWI=",
+        "ref": "main",
+        "rev": "fd5a43ff62dafe11a1f636f96fdd59e726478774",
+        "shallow": true,
+        "type": "git",
+        "url": "https://git.clan.lol/valpackett/wl-backdrop"
+      },
+      "original": {
+        "ref": "main",
+        "shallow": true,
+        "type": "git",
+        "url": "https://git.clan.lol/valpackett/wl-backdrop"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

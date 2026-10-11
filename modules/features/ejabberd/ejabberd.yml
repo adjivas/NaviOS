@@ -1,0 +1,13 @@
+modules:
+  mod_disco: {}
+  mod_roster: {}
+  mod_private: {}
+  mod_vcard: {}
+  mod_carboncopy: {}
+  mod_stream_mgmt: {}
+
+  mod_ping:
+    send_pings: true
+
+  mod_offline: {}
+  mod_muc: {}

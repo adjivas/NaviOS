@@ -1,0 +1,445 @@
+/*
+ * Australis tab groups
+ *
+ * Grouped tabs are fully isolated from australisTab.css.
+ * Hover changes color only: it never changes geometry or stacking.
+ */
+
+:root {
+  /* Geometry */
+  --australis-group-height: 21px;
+  --australis-group-body-height: 19.5px;
+  --australis-group-wing-width: 22px;
+  --australis-group-wing-height: var(--australis-group-body-height);
+  --australis-group-outer-gap: 14px;
+
+  /* Group-specific masks: unlike normal tabs, group bodies have no 2px
+   * transparent strip at the top, so their inner edge must start at y = 0. */
+  --australis-group-before-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' xmlns:svg='http://www.w3.org/2000/svg' width='30px' height='31px' preserveAspectRatio='none'><defs><svg:clipPath id='tab-group-curve-clip-path-start' clipPathUnits='objectBoundingBox'><svg:path d='m 1,0 0.05,0 0,1 -1,0 0,-0.028 C 0.32082458,0.95840561 0.4353096,0.81970962 0.48499998,0.5625 0.51819998,0.3905 0.535,0 1,0 z'/></svg:clipPath></defs><foreignObject width='30' height='31' clip-path='url(%23tab-group-curve-clip-path-start)'><div style='background:black;height:100%;width:100%;' xmlns='http://www.w3.org/1999/xhtml'></div></foreignObject></svg>");
+  --australis-group-after-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' xmlns:svg='http://www.w3.org/2000/svg' width='30px' height='31px' preserveAspectRatio='none'><defs><svg:clipPath id='tab-group-curve-clip-path-end' clipPathUnits='objectBoundingBox'><svg:path d='m 0,0 -0.05,0 0,1 1,0 0,-0.028 C 0.67917542,0.95840561 0.56569036,0.81970962 0.51599998,0.5625 0.48279998,0.3905 0.465,0 0,0 z'/></svg:clipPath></defs><foreignObject width='30' height='31' clip-path='url(%23tab-group-curve-clip-path-end)'><div style='background:black;height:100%;width:100%;' xmlns='http://www.w3.org/1999/xhtml'></div></foreignObject></svg>");
+
+  /* A 19.5px body inside a 21px group slot: pin it to the bottom. */
+  --australis-group-body-offset:
+    calc(var(--australis-group-height) - var(--australis-group-body-height));
+
+  /* Stacking */
+  --australis-z-group-selected: 8;
+  --australis-z-group-label: 10;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Native decorations                                                          */
+/* -------------------------------------------------------------------------- */
+
+.tab-group-line,
+tab-group > .tabbrowser-tab .tab-line,
+tab-group > .tabbrowser-tab .tab-bottom-line,
+tab-group > .tabbrowser-tab > .tab-stack > .tab-background > .tab-context-line {
+  display: none !important;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Group label                                                                 */
+/* -------------------------------------------------------------------------- */
+
+.tab-group-label-container,
+.tab-group-label-hover-highlight {
+  height: var(--australis-group-body-height) !important;
+  min-height: var(--australis-group-body-height) !important;
+  max-height: var(--australis-group-body-height) !important;
+
+  margin: 0 !important;
+  padding: 0 !important;
+
+  align-self: flex-end !important;
+}
+
+.tab-group-label-container {
+  overflow: visible !important;
+
+  margin-inline-start: var(--australis-group-outer-gap) !important;
+
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+
+  z-index: var(--australis-z-group-label) !important;
+
+}
+
+.tab-group-label {
+  position: relative !important;
+
+  height: var(--australis-group-body-height) !important;
+  min-height: var(--australis-group-body-height) !important;
+  max-height: var(--australis-group-body-height) !important;
+  line-height: var(--australis-group-body-height) !important;
+
+  margin: 0 !important;
+  padding-block: 0 !important;
+
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+
+  background: var(--tab-group-color) !important;
+  color: #000 !important;
+
+  overflow: visible !important;
+  z-index: var(--australis-z-group-label) !important;
+}
+
+.tab-group-label[selected],
+.tab-group-label[aria-selected="true"],
+.tab-group-label-container[selected] .tab-group-label {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+.tab-group-label::before,
+.tab-group-label::after {
+  content: "" !important;
+  position: absolute !important;
+  bottom: 0 !important;
+
+  width: var(--australis-group-wing-width) !important;
+  height: var(--australis-group-wing-height) !important;
+
+  border: 0 !important;
+  background-color: var(--tab-group-color) !important;
+
+  pointer-events: none !important;
+  z-index: -1 !important;
+}
+
+.tab-group-label::before {
+  left: calc(-1 * var(--australis-group-wing-width)) !important;
+  mask:
+    var(--australis-group-before-mask)
+    right bottom /
+      var(--australis-group-wing-width)
+      var(--australis-group-wing-height)
+    no-repeat !important;
+}
+
+.tab-group-label::after {
+  right: calc(-1 * var(--australis-group-wing-width)) !important;
+  mask:
+    var(--australis-group-after-mask)
+    left bottom /
+      var(--australis-group-wing-width)
+      var(--australis-group-wing-height)
+    no-repeat !important;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Consecutive group edges                                                     */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Consecutive tab groups form one visual run:
+ * - the first group keeps its left wing
+ * - the last group keeps its right wing
+ * - middle groups have no outer wings
+ * - the selected group, or the group containing the selected tab,
+ *   always keeps both wings
+ */
+
+/*
+ * Firefox nests .tab-group-label inside .tab-group-label-hover-highlight,
+ * therefore it is not a direct child of .tab-group-label-container.
+ */
+
+/* Hide the left wing when another tab group is immediately before. */
+tab-group + tab-group
+  > .tab-group-label-container
+  .tab-group-label::before {
+  display: none !important;
+}
+
+/* Hide the right wing when another tab group is immediately after. */
+tab-group:has(+ tab-group)
+  > .tab-group-label-container
+  .tab-group-label::after {
+  display: none !important;
+}
+
+/* Firefox exposes this state directly on the group containing the active tab. */
+tab-group[hasactivetab]
+  > .tab-group-label-container
+  .tab-group-label::before,
+tab-group[hasactivetab]
+  > .tab-group-label-container
+  .tab-group-label::after {
+  display: block !important;
+}
+
+
+
+/* -------------------------------------------------------------------------- */
+/* Group spacing                                                               */
+/* -------------------------------------------------------------------------- */
+
+tab-group + tab-group > .tab-group-label-container {
+  margin-inline-start: 0 !important;
+}
+
+tab-group:not([collapsed]) > .tabbrowser-tab:last-of-type {
+  margin-inline-end: var(--australis-group-outer-gap) !important;
+}
+
+tab-group:not([collapsed]):has(+ tab-group)
+  > .tabbrowser-tab:last-of-type {
+  margin-inline-end: 0 !important;
+}
+
+tab-group[collapsed] > .tab-group-label-container {
+  margin-inline-end: var(--australis-group-outer-gap) !important;
+}
+
+tab-group[collapsed]:has(+ tab-group)
+  > .tab-group-label-container {
+  margin-inline-end: 0 !important;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Sub-tabs                                                                    */
+/* -------------------------------------------------------------------------- */
+
+tab-group {
+  --australis-group-tab-color: transparent;
+  --australis-group-tab-hover-color: transparent;
+}
+
+tab-group:not([collapsed]) {
+  --australis-group-tab-color:
+    color-mix(in srgb, var(--tab-group-color) 45%, #1c1b22);
+
+  --australis-group-tab-hover-color:
+    color-mix(in srgb, var(--australis-group-tab-color) 85%, #fff 15%);
+}
+
+/*
+ * The complete sub-tab has a 21px slot.
+ * Its visible 19.5px body is pinned to the BOTTOM of that slot.
+ *
+ * No relative positioning/inset is necessary anymore: ordinary-tab rules no
+ * longer leak into grouped tabs.
+ */
+tab-group > .tabbrowser-tab,
+tab-group > .tabbrowser-tab > .tab-stack {
+  height: var(--australis-group-height) !important;
+  min-height: var(--australis-group-height) !important;
+  max-height: var(--australis-group-height) !important;
+
+  margin-block: 0 !important;
+  padding-block: 0 !important;
+}
+
+tab-group > .tabbrowser-tab {
+  align-self: flex-end !important;
+  overflow: visible !important;
+}
+
+tab-group > .tabbrowser-tab > .tab-stack {
+  position: relative !important;
+  overflow: visible !important;
+}
+
+/*
+ * Keep Firefox's native stack layout. The visible 19.5px layers are simply
+ * shifted down by the 1.5px difference between the 24px slot and the body.
+ *
+ * Do NOT absolutely position these XUL stack children: doing so can make a
+ * selected background escape the tab strip and cover the toolbar below.
+ */
+tab-group > .tabbrowser-tab > .tab-stack > .tab-content,
+tab-group > .tabbrowser-tab > .tab-stack > .tab-background {
+  height: var(--australis-group-body-height) !important;
+  min-height: var(--australis-group-body-height) !important;
+  max-height: var(--australis-group-body-height) !important;
+
+  margin-block-start: var(--australis-group-body-offset) !important;
+  margin-block-end: 0 !important;
+}
+
+tab-group > .tabbrowser-tab > .tab-stack > .tab-content {
+  display: flex !important;
+  align-items: center !important;
+
+  padding-block: 0 !important;
+  z-index: 1 !important;
+}
+
+tab-group > .tabbrowser-tab .tab-label-container {
+  margin-block: 0 !important;
+}
+
+tab-group > .tabbrowser-tab > .tab-stack > .tab-background {
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+
+  background-image: none !important;
+
+  transform: none !important;
+  translate: none !important;
+  transition: none !important;
+
+  overflow: visible !important;
+  z-index: 0 !important;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Sub-tab colors                                                              */
+/* -------------------------------------------------------------------------- */
+
+tab-group:not([collapsed])
+  > .tabbrowser-tab:not([selected])
+  > .tab-stack
+  > .tab-background {
+  background-color: var(--australis-group-tab-color) !important;
+}
+
+tab-group
+  > .tabbrowser-tab[selected]
+  > .tab-stack
+  > .tab-background {
+  background-color: var(--australis-active-tab) !important;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Sub-tab wings                                                               */
+/* -------------------------------------------------------------------------- */
+
+tab-group > .tabbrowser-tab > .tab-stack > .tab-background::before,
+tab-group > .tabbrowser-tab > .tab-stack > .tab-background::after {
+  content: "" !important;
+  display: block !important;
+  position: absolute !important;
+  bottom: 0 !important;
+
+  width: var(--australis-group-wing-width) !important;
+  height: var(--australis-group-wing-height) !important;
+
+  border: 0 !important;
+  background-image: none !important;
+
+  transform: none !important;
+  translate: none !important;
+  transition: none !important;
+
+  pointer-events: none !important;
+  z-index: -1 !important;
+}
+
+tab-group > .tabbrowser-tab > .tab-stack > .tab-background::before {
+  left: calc(-1 * var(--australis-group-wing-width)) !important;
+  mask:
+    var(--australis-group-before-mask)
+    right bottom /
+      var(--australis-group-wing-width)
+      var(--australis-group-wing-height)
+    no-repeat !important;
+}
+
+tab-group > .tabbrowser-tab > .tab-stack > .tab-background::after {
+  right: calc(-1 * var(--australis-group-wing-width)) !important;
+  mask:
+    var(--australis-group-after-mask)
+    left bottom /
+      var(--australis-group-wing-width)
+      var(--australis-group-wing-height)
+    no-repeat !important;
+}
+
+tab-group:not([collapsed])
+  > .tabbrowser-tab:not([selected])
+  > .tab-stack
+  > .tab-background::before,
+tab-group:not([collapsed])
+  > .tabbrowser-tab:not([selected])
+  > .tab-stack
+  > .tab-background::after {
+  background-color: var(--australis-group-tab-color) !important;
+}
+
+tab-group
+  > .tabbrowser-tab[selected]
+  > .tab-stack
+  > .tab-background::before,
+tab-group
+  > .tabbrowser-tab[selected]
+  > .tab-stack
+  > .tab-background::after {
+  background-color: var(--australis-active-tab) !important;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Sub-tab hover                                                               */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * IMPORTANT: hover changes COLOR ONLY.
+ *
+ * No width, height, mask, position, transform or z-index is declared here.
+ * Therefore the rounded ends cannot jump when the pointer enters the tab.
+ */
+tab-group:not([collapsed])
+  > .tabbrowser-tab:not([selected]):hover
+  > .tab-stack
+  > .tab-background {
+  background-color: var(--australis-group-tab-hover-color) !important;
+  background-image: none !important;
+}
+
+tab-group:not([collapsed])
+  > .tabbrowser-tab:not([selected]):hover
+  > .tab-stack
+  > .tab-background::before,
+tab-group:not([collapsed])
+  > .tabbrowser-tab:not([selected]):hover
+  > .tab-stack
+  > .tab-background::after {
+  background-color: var(--australis-group-tab-hover-color) !important;
+  background-image: none !important;
+}
+
+
+
+
+/* Hide the tab-count badge shown for collapsed groups with multiple tabs. */
+.tab-group-overflow-count-container {
+  display: none !important;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Stacking / collapsed groups                                                 */
+/* -------------------------------------------------------------------------- */
+
+tab-group > .tabbrowser-tab[selected] {
+  /* Keep the selected sub-tab above its neighbours without blocking
+   * Firefox's dragtarget positioning. */
+  z-index: 100 !important;
+}
+
+tab-group[collapsed]
+  > .tabbrowser-tab:not([selected])
+  > .tab-stack
+  > .tab-content {
+  visibility: hidden !important;
+  opacity: 0 !important;
+}
+
+#tabbrowser-arrowscrollbox-periphery {
+  padding-block: 0 !important;
+}

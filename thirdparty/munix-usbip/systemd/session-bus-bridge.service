@@ -1,0 +1,11 @@
+[Unit]
+After=session-bus.service
+Description=D-Bus VM integration bridge
+Requires=session-bus.socket session-bus.service
+
+[Service]
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/vm-user/dbus.sock
+ExecStartPre=+/run/current-system/sw/bin/chmod 0666 /dev/dri/card0 /dev/dri/renderD128
+ExecStart=/opt/bin/muvm-dbusbridge
+Group=appvm
+User=appvm

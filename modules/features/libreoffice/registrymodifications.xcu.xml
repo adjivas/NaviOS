@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<oor:items
+  xmlns:oor="http://openoffice.org/2001/registry"
+  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <item oor:path="/org.openoffice.Setup/L10N">
+    <prop oor:name="ooLocale" oor:op="fuse">
+      <value>fr-FR</value>
+    </prop>
+  </item>
+
+  <item oor:path="/org.openoffice.Setup/L10N">
+    <prop oor:name="ooSetupSystemLocale" oor:op="fuse">
+      <value>fr-FR</value>
+    </prop>
+  </item>
+
+  <!-- Force LibreOffice to use its dark appearance.
+       0 = automatic, 1 = light, 2 = dark. -->
+  <item oor:path="/org.openoffice.Office.Common/Appearance">
+    <prop oor:name="ApplicationAppearance" oor:op="fuse">
+      <value>2</value>
+    </prop>
+  </item>
+
+  <!-- Allow the document canvas to follow the active color scheme.
+       When true, Writer pages and Calc sheets remain white even when
+       LibreOffice itself uses the dark appearance. -->
+  <item oor:path="/org.openoffice.Office.Common/Appearance">
+    <prop oor:name="UseOnlyWhiteDocBackground" oor:op="fuse">
+      <value>false</value>
+    </prop>
+  </item>
+
+  <!-- Use French (France) as the default language for western documents.
+       This also determines which spelling dictionary is selected by default. -->
+  <item oor:path="/org.openoffice.Office.Linguistic/General">
+    <prop oor:name="DefaultLocale" oor:op="fuse">
+      <value>fr-FR</value>
+    </prop>
+  </item>
+
+  <!-- Enable automatic spell checking while typing.
+       Misspelled words are consequently underlined in red. -->
+  <item oor:path="/org.openoffice.Office.Linguistic/SpellChecking">
+    <prop oor:name="IsSpellAuto" oor:op="fuse">
+      <value>true</value>
+    </prop>
+  </item>
+
+  <!-- Use LibreOffice's automatic color scheme.
+       Combined with the forced dark appearance above, this selects
+       colors appropriate for dark mode. -->
+  <item oor:path="/org.openoffice.Office.UI/ColorScheme">
+    <prop oor:name="CurrentColorScheme" oor:op="fuse">
+      <value>COLOR_SCHEME_LIBREOFFICE_AUTOMATIC</value>
+    </prop>
+  </item>
+
+  <!-- Set the document canvas background to #1e1e1e. -->
+  <item oor:path="/org.openoffice.Office.UI/ColorScheme/ColorSchemes/org.openoffice.Office.UI:ColorScheme['COLOR_SCHEME_LIBREOFFICE_AUTOMATIC']/DocColor">
+    <prop oor:name="Color" oor:op="fuse">
+      <value>1973790</value>
+    </prop>
+  </item>
+
+</oor:items>

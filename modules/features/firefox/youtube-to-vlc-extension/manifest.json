@@ -1,0 +1,24 @@
+{
+  "manifest_version": 2,
+  "name": "YouTube to VLC",
+  "version": "0.1.1",
+  "description": "Automatically open YouTube videos in VLC",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "youtube-to-vlc@navios.local"
+    }
+  },
+  "permissions": [
+    "tabs",
+    "nativeMessaging",
+    "https://youtube.com/*",
+    "https://www.youtube.com/*",
+    "https://m.youtube.com/*"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "persistent": false
+  }
+}

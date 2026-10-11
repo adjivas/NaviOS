@@ -1,0 +1,268 @@
+diff --git a/src/render_helpers/framebuffer_effect.rs b/src/render_helpers/framebuffer_effect.rs
+index 9f9cb876..7b9142ec 100644
+--- a/src/render_helpers/framebuffer_effect.rs
++++ b/src/render_helpers/framebuffer_effect.rs
+@@ -15,6 +15,7 @@ use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
+ use crate::render_helpers::background_effect::RenderParams;
+ use crate::render_helpers::blur::{Blur, BlurOptions};
+ use crate::render_helpers::capture;
++use crate::render_helpers::liquid_glass::LiquidGlassOptions;
+ use crate::render_helpers::renderer::AsGlesFrame as _;
+ use crate::render_helpers::shaders::{mat3_uniform, Shaders};
+ use crate::utils::region::TransformedRegion;
+@@ -37,6 +38,8 @@ pub struct FramebufferEffectElement {
+     blur_options: Option<BlurOptions>,
+     noise: f32,
+     saturation: f32,
++    liquid_glass: Option<LiquidGlassOptions>,
++    padding_pixels: f32,
+ }
+ 
+ #[derive(Debug)]
+@@ -67,6 +70,8 @@ impl FramebufferEffect {
+         blur_options: Option<BlurOptions>,
+         noise: f32,
+         saturation: f32,
++        liquid_glass: Option<LiquidGlassOptions>,
++        padding_pixels: f32,
+     ) -> FramebufferEffectElement {
+         let (clip_geo, corner_radius) = params
+             .clip
+@@ -88,6 +93,8 @@ impl FramebufferEffect {
+             blur_options,
+             noise,
+             saturation,
++            liquid_glass,
++            padding_pixels,
+         }
+     }
+ }
+@@ -97,7 +104,7 @@ impl FramebufferEffectElement {
+         &self,
+         crop: Rectangle<f64, Logical>,
+         transform: Transform,
+-    ) -> [Uniform<'static>; 7] {
++    ) -> Vec<Uniform<'static>> {
+         let offset = crop.loc - (self.clip_geo.loc - self.geometry.loc);
+         let offset = Vec2::new(offset.x as f32, offset.y as f32);
+         let crop_size = Vec2::new(crop.size.w as f32, crop.size.h as f32);
+@@ -115,7 +122,7 @@ impl FramebufferEffectElement {
+ 
+         let clip_geo_size = (self.clip_geo.size.w as f32, self.clip_geo.size.h as f32);
+ 
+-        [
++        let mut uniforms = vec![
+             Uniform::new("niri_scale", self.scale),
+             Uniform::new("geo_size", clip_geo_size),
+             Uniform::new("corner_radius", <[f32; 4]>::from(self.corner_radius)),
+@@ -123,7 +130,79 @@ impl FramebufferEffectElement {
+             Uniform::new("noise", self.noise),
+             Uniform::new("saturation", self.saturation),
+             Uniform::new("bg_color", [0f32, 0., 0., 0.]),
+-        ]
++            Uniform::new("lg_padding_pixels", self.padding_pixels),
++        ];
++
++        if let Some(lg) = &self.liquid_glass {
++            uniforms.extend([
++                Uniform::new("lg_liquidity", lg.liquidity as f32),
++                Uniform::new("lg_refraction_strength", lg.refraction_strength as f32),
++                Uniform::new("lg_power_factor", lg.power_factor as f32),
++                Uniform::new("lg_refraction_a", lg.refraction_a as f32),
++                Uniform::new("lg_refraction_b", lg.refraction_b as f32),
++                Uniform::new("lg_refraction_c", lg.refraction_c as f32),
++                Uniform::new("lg_refraction_d", lg.refraction_d as f32),
++                Uniform::new("lg_refraction_power", lg.refraction_power as f32),
++                Uniform::new("lg_physical_refraction", lg.physical_refraction as f32),
++                Uniform::new("lg_glow_weight", lg.glow_weight as f32),
++                Uniform::new("lg_glow_bias", lg.glow_bias as f32),
++                Uniform::new("lg_glow_edge0", lg.glow_edge0 as f32),
++                Uniform::new("lg_glow_edge1", lg.glow_edge1 as f32),
++                Uniform::new("lg_edge_lighting", lg.edge_lighting as f32),
++                Uniform::new("lg_fringing", lg.fringing as f32),
++                Uniform::new("lg_refraction_dilute", lg.refraction_dilute as f32),
++                Uniform::new("lg_dilute_strength", lg.dilute_strength as f32),
++                Uniform::new("lg_dilute_fringing", lg.dilute_fringing as f32),
++                Uniform::new("lg_physical_refraction", lg.physical_refraction as f32),
++                Uniform::new("lg_lens_distortion", lg.lens_distortion as f32),
++                Uniform::new("lg_brightness", lg.brightness as f32),
++                Uniform::new("lg_contrast", lg.contrast as f32),
++                Uniform::new("lg_saturation", lg.saturation as f32),
++                Uniform::new("lg_vibrancy", lg.vibrancy as f32),
++                Uniform::new("lg_adaptive_dim", lg.adaptive_dim as f32),
++                Uniform::new("lg_adaptive_boost", lg.adaptive_boost as f32),
++                Uniform::new("lg_edge_thickness", lg.edge_thickness as f32),
++                Uniform::new("lg_mode", lg.mode as f32),
++                Uniform::new("lg_bevel_intensity", lg.refraction_bevel_intensity as f32),
++                Uniform::new("lg_offset_strength", lg.refraction_offset_strength as f32),
++                Uniform::new("lg_oklab_saturation", lg.oklab_saturation as f32),
++            ]);
++        } else {
++            uniforms.extend([
++                Uniform::new("lg_liquidity", 0.0f32),
++                Uniform::new("lg_refraction_strength", 0.0f32),
++                Uniform::new("lg_power_factor", 0.0f32),
++                Uniform::new("lg_refraction_a", 0.0f32),
++                Uniform::new("lg_refraction_b", 0.0f32),
++                Uniform::new("lg_refraction_c", 0.0f32),
++                Uniform::new("lg_refraction_d", 0.0f32),
++                Uniform::new("lg_refraction_power", 0.0f32),
++                Uniform::new("lg_physical_refraction", 0.0f32),
++                Uniform::new("lg_glow_weight", 0.0f32),
++                Uniform::new("lg_glow_bias", 0.0f32),
++                Uniform::new("lg_glow_edge0", 0.0f32),
++                Uniform::new("lg_glow_edge1", 0.0f32),
++                Uniform::new("lg_edge_lighting", 0.0f32),
++                Uniform::new("lg_fringing", 0.0f32),
++                Uniform::new("lg_refraction_dilute", 0.0f32),
++                Uniform::new("lg_dilute_strength", 0.0f32),
++                Uniform::new("lg_dilute_fringing", 0.0f32),
++                Uniform::new("lg_lens_distortion", 0.0f32),
++                Uniform::new("lg_brightness", 0.0f32),
++                Uniform::new("lg_contrast", 0.0f32),
++                Uniform::new("lg_saturation", 0.0f32),
++                Uniform::new("lg_vibrancy", 0.0f32),
++                Uniform::new("lg_adaptive_dim", 0.0f32),
++                Uniform::new("lg_adaptive_boost", 0.0f32),
++                Uniform::new("lg_edge_thickness", 0.15f32),
++                Uniform::new("lg_mode", 0.0f32),
++                Uniform::new("lg_bevel_intensity", 10.0f32),
++                Uniform::new("lg_offset_strength", 8.0f32),
++                Uniform::new("lg_oklab_saturation", 0.0f32),
++            ]);
++        }
++
++        uniforms
+     }
+ }
+ 
+diff --git a/src/render_helpers/mod.rs b/src/render_helpers/mod.rs
+index 6c19c0ec..2f12a070 100644
+--- a/src/render_helpers/mod.rs
++++ b/src/render_helpers/mod.rs
+@@ -30,6 +30,7 @@ pub mod background_effect;
+ pub mod blur;
+ pub mod border;
+ pub mod capture;
++pub mod liquid_glass;
+ pub mod clipped_surface;
+ pub mod damage;
+ pub mod debug;
+diff --git a/src/render_helpers/shaders/mod.rs b/src/render_helpers/shaders/mod.rs
+index 2e3c9875..5f16cab7 100644
+--- a/src/render_helpers/shaders/mod.rs
++++ b/src/render_helpers/shaders/mod.rs
+@@ -107,6 +107,37 @@ impl Shaders {
+                     UniformName::new("geo_size", UniformType::_2f),
+                     UniformName::new("corner_radius", UniformType::_4f),
+                     UniformName::new("input_to_geo", UniformType::Matrix3x3),
++                    UniformName::new("lg_liquidity", UniformType::_1f),
++                    UniformName::new("lg_refraction_strength", UniformType::_1f),
++                    UniformName::new("lg_power_factor", UniformType::_1f),
++                    UniformName::new("lg_refraction_a", UniformType::_1f),
++                    UniformName::new("lg_refraction_b", UniformType::_1f),
++                    UniformName::new("lg_refraction_c", UniformType::_1f),
++                    UniformName::new("lg_refraction_d", UniformType::_1f),
++                    UniformName::new("lg_refraction_power", UniformType::_1f),
++                    UniformName::new("lg_physical_refraction", UniformType::_1f),
++                    UniformName::new("lg_glow_weight", UniformType::_1f),
++                    UniformName::new("lg_glow_bias", UniformType::_1f),
++                    UniformName::new("lg_glow_edge0", UniformType::_1f),
++                    UniformName::new("lg_glow_edge1", UniformType::_1f),
++                    UniformName::new("lg_edge_lighting", UniformType::_1f),
++                    UniformName::new("lg_fringing", UniformType::_1f),
++                    UniformName::new("lg_refraction_dilute", UniformType::_1f),
++                    UniformName::new("lg_dilute_strength", UniformType::_1f),
++                    UniformName::new("lg_dilute_fringing", UniformType::_1f),
++                    UniformName::new("lg_lens_distortion", UniformType::_1f),
++                    UniformName::new("lg_brightness", UniformType::_1f),
++                    UniformName::new("lg_contrast", UniformType::_1f),
++                    UniformName::new("lg_saturation", UniformType::_1f),
++                    UniformName::new("lg_vibrancy", UniformType::_1f),
++                    UniformName::new("lg_adaptive_dim", UniformType::_1f),
++                    UniformName::new("lg_adaptive_boost", UniformType::_1f),
++                    UniformName::new("lg_edge_thickness", UniformType::_1f),
++                    UniformName::new("lg_padding_pixels", UniformType::_1f),
++                    UniformName::new("lg_mode", UniformType::_1f),
++                    UniformName::new("lg_bevel_intensity", UniformType::_1f),
++                    UniformName::new("lg_offset_strength", UniformType::_1f),
++                    UniformName::new("lg_oklab_saturation", UniformType::_1f),
+                 ],
+             )
+             .map_err(|err| {
+@@ -129,6 +160,37 @@ impl Shaders {
+                     UniformName::new("noise", UniformType::_1f),
+                     UniformName::new("saturation", UniformType::_1f),
+                     UniformName::new("bg_color", UniformType::_4f),
++                    UniformName::new("lg_liquidity", UniformType::_1f),
++                    UniformName::new("lg_refraction_strength", UniformType::_1f),
++                    UniformName::new("lg_power_factor", UniformType::_1f),
++                    UniformName::new("lg_refraction_a", UniformType::_1f),
++                    UniformName::new("lg_refraction_b", UniformType::_1f),
++                    UniformName::new("lg_refraction_c", UniformType::_1f),
++                    UniformName::new("lg_refraction_d", UniformType::_1f),
++                    UniformName::new("lg_refraction_power", UniformType::_1f),
++                    UniformName::new("lg_physical_refraction", UniformType::_1f),
++                    UniformName::new("lg_glow_weight", UniformType::_1f),
++                    UniformName::new("lg_glow_bias", UniformType::_1f),
++                    UniformName::new("lg_glow_edge0", UniformType::_1f),
++                    UniformName::new("lg_glow_edge1", UniformType::_1f),
++                    UniformName::new("lg_edge_lighting", UniformType::_1f),
++                    UniformName::new("lg_fringing", UniformType::_1f),
++                    UniformName::new("lg_refraction_dilute", UniformType::_1f),
++                    UniformName::new("lg_dilute_strength", UniformType::_1f),
++                    UniformName::new("lg_dilute_fringing", UniformType::_1f),
++                    UniformName::new("lg_lens_distortion", UniformType::_1f),
++                    UniformName::new("lg_brightness", UniformType::_1f),
++                    UniformName::new("lg_contrast", UniformType::_1f),
++                    UniformName::new("lg_saturation", UniformType::_1f),
++                    UniformName::new("lg_vibrancy", UniformType::_1f),
++                    UniformName::new("lg_adaptive_dim", UniformType::_1f),
++                    UniformName::new("lg_adaptive_boost", UniformType::_1f),
++                    UniformName::new("lg_edge_thickness", UniformType::_1f),
++                    UniformName::new("lg_padding_pixels", UniformType::_1f),
++                    UniformName::new("lg_mode", UniformType::_1f),
++                    UniformName::new("lg_bevel_intensity", UniformType::_1f),
++                    UniformName::new("lg_offset_strength", UniformType::_1f),
++                    UniformName::new("lg_oklab_saturation", UniformType::_1f),
+                 ],
+             )
+             .map_err(|err| {
+@@ -411,7 +473,12 @@ fn compile_global_program(
+             UniformName::new("niri_region", UniformType::_4f),
+             UniformName::new("niri_output_size", UniformType::_2f),
+         ],
+-        &["niri_screen", "niri_prev", "niri_screen_prev", "niri_buffer"],
++        &[
++            "niri_screen",
++            "niri_prev",
++            "niri_screen_prev",
++            "niri_buffer",
++        ],
+     )
+ }
+ 
+@@ -432,7 +499,12 @@ fn compile_global_buffer_program(
+             UniformName::new("niri_region", UniformType::_4f),
+             UniformName::new("niri_output_size", UniformType::_2f),
+         ],
+-        &["niri_screen", "niri_prev", "niri_screen_prev", "niri_buffer"],
++        &[
++            "niri_screen",
++            "niri_prev",
++            "niri_screen_prev",
++            "niri_buffer",
++        ],
+     )
+ }
+ 
+@@ -470,7 +542,8 @@ pub fn set_custom_global_program(renderer: &mut GlesRenderer, src: Option<&str>,
+         }
+         _ => None,
+     };
+-    if let Some(prev) = Shaders::get(renderer).replace_custom_global_buffer_program(buffer_program) {
++    if let Some(prev) = Shaders::get(renderer).replace_custom_global_buffer_program(buffer_program)
++    {
+         if let Err(err) = prev.destroy(renderer) {
+             warn!("error destroying previous global_buffer shader: {err:?}");
+         }

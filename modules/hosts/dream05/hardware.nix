@@ -1,0 +1,203 @@
+{
+  den.aspects.dream05-hardware.nixos = {
+    config,
+    pkgs,
+    lib,
+    ...
+  }: {
+    options.dream05-hardware = {
+      serial = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Enable USB serial console (ttyGS0) for debugging.
+
+            When enabled, allows access to the device via USB serial connection.
+            This is useful for debugging but not needed for normal operation.
+          '';
+        };
+
+        verbose = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Enable verbose kernel logging for debugging.
+
+            When enabled, sets kernel to output all log messages (ignore_loglevel)
+            and configures systemd to use debug log level. This produces significantly
+            more logging output, useful for troubleshooting boot issues.
+          '';
+        };
+      };
+    };
+
+    # imports = [
+    #   ./disk-image.nix
+    # ];
+
+    config = {
+      # Apply the Fairphone FP5 overlay.
+      # nixpkgs.overlays = [
+      #   (import ../../overlays/fairphone-fp5)
+      # ];
+
+      # Target architecture for Fairphone 5.
+      nixpkgs.hostPlatform = "aarch64-linux";
+
+      # The custom kernel installs an EFI zboot image for systemd-boot.
+      system.boot.loader.kernelFile = "vmlinuz.efi";
+
+      hardware = {
+        # Use the matching kernel-built DTB for the bootstrap UKI and later generations.
+        deviceTree = {
+          enable = true;
+
+          name = "qcom/qcm6490-fairphone-fp5.dtb";
+        };
+
+        # Enable all firmware regardless of license.
+        enableAllFirmware = true;
+        # Use our custom Fairphone 5 firmware package (see `flake.nix`).
+        firmware = with pkgs; [
+          firmware-fairphone-fp5
+        ];
+        # Qualcomm firmware must be uncompressed.
+        firmwareCompression = "none";
+      };
+
+      boot = {
+        # Use our custom `sc7280-mainline` kernel (see `flake.nix`).
+        kernelPackages = pkgs.linuxPackagesFor pkgs.kernel-fairphone-fp5;
+
+        initrd = {
+          enable = true;
+
+          # Initramfs compression. NixOS defaults to `zstd`, but we use `gzip` because the
+          # PostmarketOS kernel doesn't have `CONFIG_RD_ZSTD` enabled and only supports
+          # `CONFIG_RD_GZIP=y` for ramdisk decompression.
+          compressor = "gzip";
+
+          # Configure kernel modules in the initramfs for device boot.
+          # See: https://gitlab.postmarketos.org/postmarketOS/pmaports/-/blob/master/device/testing/device-fairphone-fp5/modules-initfs.
+          availableKernelModules = {
+            # Device-specific drivers.
+            fsa4480 = true; # USB-C audio switch.
+            goodix_berlin_core = true; # Touchscreen core driver.
+            goodix_berlin_spi = true; # Touchscreen SPI interface.
+            msm = true;
+            panel-raydium-rm692e5 = true; # Display panel driver.
+            ptn36502 = true; # USB-C redriver.
+            spi-geni-qcom = true; # Qualcomm SPI controller.
+          };
+
+          # Disable default modules (like `ahci`) that don't exist in our custom kernel.
+          includeDefaultModules = false;
+
+          # Use systemd-based stage 1.
+          systemd = {
+            enable = true;
+
+            # The Fairphone 5 has no TPM, and the custom kernel omits TPM drivers.
+            tpm2.enable = false;
+          };
+        };
+
+        # GRUB is not used.
+        loader.grub.enable = false;
+
+        # On first boot, perform one-time initialization tasks. This is similar to how
+        # `sd-image.nix` handles first-boot setup for SD card images, see:
+        # https://github.com/NixOS/nixpkgs/blob/master/nixos/modules/installer/sd-card/sd-image.nix.
+        postBootCommands = ''
+          # On first boot, register the contents of the initial Nix store.
+          if [ -f /nix-path-registration ]; then
+            set -euo pipefail
+            set -x
+
+            # Register the contents of the initial Nix store.
+            # The repart image includes /nix-path-registration with the database entries
+            # for every store path in the initial system closure.
+            # Without this step, Nix doesn't know about pre-installed paths and tries to
+            # build them, which fails on the device.
+            ${config.nix.package.out}/bin/nix-store --load-db < /nix-path-registration
+
+            # nixos-rebuild also requires a "system" profile and an /etc/NIXOS tag.
+            touch /etc/NIXOS
+            ${config.nix.package.out}/bin/nix-env -p /nix/var/nix/profiles/system --set /run/current-system
+
+            # Prevents this from running on later boots.
+            rm -f /nix-path-registration
+          fi
+        '';
+
+        # Kernel command-line parameters.
+        #
+        # Important: Console order matters for both the kernel and initrd! Kernel output is
+        # sent to every configured console, while the last console becomes `/dev/console`.
+        kernelParams =
+          lib.mkAfter
+          (
+            [
+              "loglevel=4"
+            ]
+            ++ lib.optionals config.dream05-hardware.serial.enable [
+              # Make systemd write stage-1 and stage-2 boot messages to the console.
+              "systemd.log_target=console"
+
+              # Add the USB serial console.
+              "console=ttyGS0,115200"
+            ]
+            ++ [
+              # Hardware UART serial console.
+              # See: https://gitlab.postmarketos.org/postmarketOS/pmaports/-/blob/master/device/testing/device-fairphone-fp5/deviceinfo.
+              "console=ttyMSM0,115200"
+
+              # Framebuffer console; makes boot messages visible on the phone's screen.
+              # This is listed last so it becomes the primary console (`/dev/console`).
+              # The DRM driver provides fbdev emulation (CONFIG_DRM_FBDEV_EMULATION=y in kernel),
+              # which creates the framebuffer device that `tty1` outputs to.
+              "console=tty1"
+            ]
+            # Add verbose logging options if enabled.
+            ++ lib.optionals config.dream05-hardware.serial.verbose [
+              # Force ALL kernel log messages to console, including userspace writes to `/dev/kmsg`.
+              # Without this, initramfs messages written to `/dev/kmsg` don't appear on serial console.
+              "ignore_loglevel"
+              # Enable debug-level systemd logging.
+              "systemd.log_level=debug"
+            ]
+          );
+      };
+
+      # Root filesystem configuration.
+      fileSystems."/" = {
+        device = "/dev/disk/by-label/nixos";
+        fsType = "ext4";
+      };
+
+      # Console configuration for serial output.
+      console.earlySetup = true;
+
+      # Set getty on both serial consoles for login.
+      #
+      # `ttyGS0` is the USB serial (only enabled if serial.enable is true).
+      systemd.services."serial-getty@ttyGS0" = lib.mkIf config.dream05-hardware.serial.enable {
+        enable = true;
+        wantedBy = ["multi-user.target"];
+        serviceConfig = {
+          Restart = "always";
+        };
+      };
+
+      # `ttyMSM0` is the hardware UART serial (always enabled for framebuffer console).
+      systemd.services."serial-getty@ttyMSM0" = {
+        enable = true;
+        wantedBy = ["multi-user.target"];
+        serviceConfig = {
+          Restart = "always";
+        };
+      };
+    };
+  };
+}
