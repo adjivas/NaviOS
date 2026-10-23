@@ -1,0 +1,6 @@
+[Unit]
+Description=microVM Network configuration
+
+[Service]
+Type=oneshot
+ExecStart=/opt/bin/muvm-configure-network

@@ -1,0 +1,13 @@
+--- a/nixos-modules/microvm/virtiofsd/default.nix
++++ b/nixos-modules/microvm/virtiofsd/default.nix
+@@ -19,7 +19,9 @@
+         supervisordConfig = {
+           supervisord = {
+             nodaemon = true;
+-            user = "root";
++            logfile = "/dev/stdout";
++            logfile_maxbytes = 0;
++            pidfile = "/run/microvm-${config.networking.hostName}/supervisord.pid";
+           };
+ 
+           "eventlistener:notify" = {

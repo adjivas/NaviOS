@@ -1,0 +1,28 @@
+diff --git a/src/dcp.c b/src/dcp.c
+--- a/src/dcp.c
++++ b/src/dcp.c
+@@ -70,9 +70,10 @@ find_calibration_by_model(size_t maxlen,
+         // Check in XDG_CONFIG_HOME/megapixels/config
+         snprintf(conffile,
+                  maxlen,
+-                 "%s/megapixels/config/%s.conf",
++                 "%s/megapixels/config/%s,%s.dcp",
+                  config_home,
+-                 model);
++                 model,
++                 sensor);
+         if (access(conffile, F_OK) != -1) {
+                 if (fch) {
+                         free(config_home);
+@@ -82,9 +83,9 @@ find_calibration_by_model(size_t maxlen,
+         static const char *paths[] = { "config/%s,%s.dcp",
+                                        SYSCONFDIR "/megapixels/config/%s,%s.dcp",
+                                        DATADIR "/megapixels/config/%s,%s.dcp",
+                                        NULL };
+-        for (const char *fmt = paths[0]; fmt; fmt++) {
+-                snprintf(conffile, maxlen, fmt, model, sensor);
++        for (const char **fmt = paths; *fmt; fmt++) {
++                snprintf(conffile, maxlen, *fmt, model, sensor);
+                 if (access(conffile, F_OK) != -1) {
+                         printf("Found calibration file at %s\n", conffile);
+                         return true;

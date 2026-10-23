@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+SCRIPT_PATH=$(dirname $(realpath -s $0))
+MUVM_PATH=$(dirname $(which muvm))
+PASST_PATH=$(dirname $(which passt))
+WL_PROXY_PATH=$(dirname $(which wl-cross-domain-proxy))
+WL_BACKDROP_PATH=$(dirname $(which wl-backdrop))
+HOST_OPENGL_DRIVER=/run/opengl-driver
+: "${MICROVM_DEFAULT_COMMAND:=/run/current-system/sw/bin/bash}"
+: "${MUNIX_SYSTEMD_UNITS:="${SCRIPT_PATH}/systemd"}"
+MICROVM_CLOSURE=
+MICROVM_COMMAND=()
+MICROVM_UID=1337
+MICROVM_GID=1337
+BWRAP_ARGS=()
+MUVM_ARGS=()
+SIDEBUS_ARGS=()
+EXTRA_INIT_ARGS=()
+GPU=1
+WAYLAND=1
+PIPEWIRE=1
+X11=0
+NETWORK=1
+ENV_DEFAULTS=1
+USING_PUBLISH=0
+ATTACH_EXISTING=
+export TMP=/tmp TMPDIR=/tmp TEMP=/tmp TEMPDIR=/tmp LC_ALL=C
+
+if [ ! -e "$HOST_OPENGL_DRIVER" ]; then
+  HOST_OPENGL_DRIVER="$FALLBACK_OPENGL_DRIVER"
+fi
+
+# A little bit cursed: pre-pass to relaunch with new env var..
+BG_COLOR=
+pargs=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --bg-color) BG_COLOR="$2"; shift 2;;
+    --wl-backdrop-bin-dir) WL_BACKDROP_PATH="$2"; shift 2;;
+    *) pargs+=("$1"); shift;;
+  esac
+done
+if [ "$BG_COLOR" = "" ]; then
+  set -- "${pargs[@]}"
+else
+  exec "$WL_BACKDROP_PATH/wl-backdrop" --background "$BG_COLOR" -- "$(readlink -f "$0")" "${pargs[@]}"
+fi
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -a|--attach) ATTACH_EXISTING="$2"; shift 2;;
+    -u|--uid) MICROVM_UID="$2"; shift 2;;
+    -g|--gid) MICROVM_GID="$2"; shift 2;;
+    --no-gpu) GPU=0; shift 1;;
+    --no-wayland) WAYLAND=0; shift 1;;
+    --no-pipewire) PIPEWIRE=0; shift 1;;
+    --no-network) NETWORK=0; shift 1;;
+    --no-env-defaults) ENV_DEFAULTS=0; shift 1;;
+    --x11) X11=1; shift 1;;
+    -b|--bind) BWRAP_ARGS+=("--bind" "$2" "$3"); SIDEBUS_ARGS+=("--path-mapping" "$3=$2"); shift 3;;
+    --ro-bind) BWRAP_ARGS+=("--ro-bind" "$2" "$3"); SIDEBUS_ARGS+=("--path-mapping" "$3=$2"); shift 3;;
+    --env)
+      if [[ "$#" -lt 2 || "$2" != *=* ]]; then
+        echo "munix: --env expects NAME=VALUE" >&2
+        exit 1
+      fi
+    
+      name="${2%%=*}"
+      value="${2#*=}"
+    
+      if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        echo "munix: invalid environment variable name: $name" >&2
+        exit 1
+      fi
+    
+      MUVM_ARGS+=("-e" "$name=$value")
+      EXTRA_INIT_ARGS+=("systemd.setenv=$name=$value")
+    
+      shift 2
+    ;;
+    -e|--expose) BWRAP_ARGS+=("--bind" "$2" "$2"); SIDEBUS_ARGS+=("--path-mapping" "$2=$2"); shift 2;;
+    --ro-expose) BWRAP_ARGS+=("--ro-bind" "$2" "$2"); SIDEBUS_ARGS+=("--path-mapping" "$2=$2"); shift 2;;
+    -p|--publish) USING_PUBLISH=1; MUVM_ARGS+=("--publish=$2"); shift 2;;
+    --passt-args) MUVM_ARGS+=("--passt-args" "${2@Q}"); shift 2;;
+    --host-opengl-driver) HOST_OPENGL_DRIVER="$2"; shift 2;;
+    --munix-bin-dir) SCRIPT_PATH="$2"; shift 2;;
+    --muvm-bin-dir) MUVM_PATH="$2"; shift 2;;
+    --passt-bin-dir) PASST_PATH="$2"; shift 2;;
+    --wl-proxy-bin-dir) WL_PROXY_PATH="$2"; shift 2;;
+    --wl-backdrop-bin-dir) shift 2;;
+    --) shift 1; MICROVM_COMMAND+=("$@"); break;;
+    -*) echo "munix: unknown option: $1" >&2; exit 1;;
+    *)
+      if [ "$MICROVM_CLOSURE" = "" ]; then
+        MICROVM_CLOSURE="$1"
+      else
+        MICROVM_COMMAND+=("$1")
+      fi
+      shift 1;;
+  esac
+done
+
+if [ "$ATTACH_EXISTING" != "" ]; then
+  if [ "$MICROVM_CLOSURE" == "" ]; then
+    MICROVM_CLOSURE="$MICROVM_DEFAULT_COMMAND"
+  fi
+  exec nsenter --user --mount --preserve-credentials -t "$ATTACH_EXISTING" /run/munix/muvm/muvm -it "$MICROVM_CLOSURE" "${MICROVM_COMMAND[@]}"
+fi
+
+if [ "$MICROVM_CLOSURE" = "" ]; then
+  echo "munix: provide a system closure path as a positional argument" >&2
+  exit 1
+fi
+
+if [ "$MUVM_PATH" = "" ]; then
+  echo "munix: muvm not found, provide a --muvm-bin-dir or fix \$PATH" >&2
+  exit 1
+fi
+
+if [ "$PASST_PATH" = "" ]; then
+  echo "munix: passt not found, provide a --passt-bin-dir or fix \$PATH" >&2
+  exit 1
+fi
+
+if [ "$WL_PROXY_PATH" = "" ]; then
+  echo "munix: wl-cross-domain-proxy not found, provide a --wl-proxy-bin-dir or fix \$PATH" >&2
+  exit 1
+fi
+
+if [ "$WL_BACKDROP_PATH" = "" ]; then
+  echo "munix: wl-backdrop not found, provide a --wl-backdrop-bin-dir or fix \$PATH" >&2
+  exit 1
+fi
+
+if [ ! -e "$HOST_OPENGL_DRIVER" ]; then
+  echo "munix: host graphics driver not found, provide a --host-opengl-driver" >&2
+  exit 1
+fi
+
+# Resolve symlinks automatically
+MICROVM_CLOSURE=$(realpath "$MICROVM_CLOSURE")
+
+if [ ${#MICROVM_COMMAND[@]} -eq 0 ]; then
+  MICROVM_COMMAND=("$MICROVM_DEFAULT_COMMAND")
+fi
+
+if [ "$GPU" -eq 1 ]; then
+  BWRAP_ARGS+=(
+    "--dev-bind" "/dev/dri" "/dev/dri"
+    "--ro-bind" "$HOST_OPENGL_DRIVER" "/run/opengl-driver"
+  )
+  GPU_MODE=venus
+  kernel_ver="$(uname -r)"
+  kernel_ver_arr=(${kernel_ver//./ })
+  kernel_major="${kernel_ver_arr:-0}"
+  kernel_ver_arr=("${kernel_ver_arr[@]:1}")
+  kernel_minor="${kernel_ver_arr:-0}"
+  if [[ "$kernel_major" -gt 6 || ("$kernel_major" -eq 6 && "$kernel_minor" -gt 12) ]]; then
+    for card in /dev/dri/card*; do
+      driver_link="/sys/class/drm/${card##*/}/device/driver"
+      if [ -L "$driver_link" ]; then
+        driver_mod="$(readlink "$driver_link")"
+        driver_name="${driver_mod##*/}"
+        case "$driver_name" in
+          amdgpu|msm_dpu) # TODO: i915
+            echo "munix: ${card##*/} gpu driver is '$driver_name', using vdrm" >&2;
+            GPU_MODE=drm
+            break;;
+          *) echo "munix: ${card##*/} gpu driver is '$driver_name', using venus unless more gpus are found" >&2;;
+        esac
+      else
+        echo "munix: ${card##*/} has no gpu driver" >&2;
+      fi
+    done
+  else
+    echo "munix: kernel version '$kernel_ver' is older than 6.13, not using gpu due to missing support" >&2;
+    GPU_MODE=software
+  fi
+  MUVM_ARGS+=("--gpu-mode=$GPU_MODE")
+else
+  BWRAP_ARGS+=("--dir" "/dev/dri")
+  MUVM_ARGS+=("--gpu-mode=software")
+fi
+
+if [ "$WAYLAND" -eq 1 ]; then
+  if [ "$XDG_RUNTIME_DIR" = "" ]; then
+    echo "munix: wayland requested, but no XDG_RUNTIME_DIR set" >&2
+    exit 1
+  fi
+  BWRAP_ARGS+=(
+    "--bind" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
+    "--setenv" "WAYLAND_DISPLAY" "$WAYLAND_DISPLAY"
+  )
+  if [ "$ENV_DEFAULTS" -eq 1 ]; then
+    MUVM_ARGS+=(
+      "-e" "XDG_SESSION_TYPE=wayland"
+      "-e" "SDL_VIDEODRIVER=wayland"
+      "-e" "QT_QPA_PLATFORM=wayland"
+      "-e" "_JAVA_AWT_WM_NONREPARENTING=1" # e.g. with xwayland-satellite
+      "-e" "ELECTRON_OZONE_PLATFORM_HINT=wayland" # 28 < Electron < 39; newer should work by default
+    )
+  fi
+fi
+
+if [ "$PIPEWIRE" -eq 1 ]; then
+  if [ "$PIPEWIRE_RUNTIME_DIR" = "" ]; then
+    PIPEWIRE_RUNTIME_DIR="$XDG_RUNTIME_DIR"
+  fi
+  if [ "$PIPEWIRE_RUNTIME_DIR" = "" ]; then
+    PIPEWIRE_RUNTIME_DIR="$USERPROFILE"
+  fi
+  if [ "$PIPEWIRE_RUNTIME_DIR" = "" ]; then
+    echo "munix: pipewire requested, but no PIPEWIRE_RUNTIME_DIR/XDG_RUNTIME_DIR/USERPROFILE set" >&2
+    exit 1
+  fi
+  if [ "$PIPEWIRE_REMOTE" = "" ]; then
+    PIPEWIRE_REMOTE=pipewire-0
+  fi
+  BWRAP_ARGS+=("--bind" "$PIPEWIRE_RUNTIME_DIR/$PIPEWIRE_REMOTE" "$PIPEWIRE_RUNTIME_DIR/$PIPEWIRE_REMOTE")
+  if [ "$ENV_DEFAULTS" -eq 1 ]; then
+    MUVM_ARGS+=(
+      "-e" "SDL_AUDIO_DRIVER=pipewire"
+    )
+  fi
+else
+  # Gate the guest audio bridges off and point SDL at its null sink.
+  EXTRA_INIT_ARGS+=("systemd.set_credential=munix.noaudio:1")
+  if [ "$ENV_DEFAULTS" -eq 1 ]; then
+    MUVM_ARGS+=(
+      "-e" "SDL_AUDIO_DRIVER=dummy"
+    )
+  fi
+fi
+
+if [ "$X11" -eq 1 ]; then
+  BWRAP_ARGS+=(
+    "--bind" "/tmp/.X11-unix" "/tmp/.X11-unix"
+    "--ro-bind" "$XAUTHORITY" "$XAUTHORITY"
+  )
+else
+  unset DISPLAY XAUTHORITY
+fi
+
+declare -a BG_PIDS
+
+cleanup() {
+    for pid in "${BG_PIDS[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "Killing process $pid"
+            kill -INT "$pid"
+            wait "$pid" 2>/dev/null
+        fi
+    done
+    exit
+}
+
+trap cleanup EXIT INT TERM
+
+HOST_RUNTIME_DIR="$XDG_RUNTIME_DIR/munix.$$"
+mkdir -p $HOST_RUNTIME_DIR
+rm $HOST_RUNTIME_DIR/*
+mkdir -p "$HOST_RUNTIME_DIR/home"
+sidebus-broker \
+  --path-mapping "/home=$HOST_RUNTIME_DIR/home" \
+  "${SIDEBUS_ARGS[@]}" \
+  --guest-mountpoint /mnt/munix-doc-portal/doc \
+  --runtime-dir "$HOST_RUNTIME_DIR" \
+  --unix-path "$HOST_RUNTIME_DIR/port.sock" & # >/dev/null 2>&1 &
+BG_PIDS+=("$!")
+while [ ! -S "$HOST_RUNTIME_DIR/port.sock" ]; do sleep 0.1; done
+BWRAP_ARGS=( # prepend home mount before other mounts to not override custom bind mounts under /home
+  --bind "$HOST_RUNTIME_DIR/home" /home
+  "${BWRAP_ARGS[@]}"
+  --bind "$HOST_RUNTIME_DIR" /mnt/munix-doc-portal
+  --setenv "RUTABAGA_DBUS_CLIENT_SOCKET" /mnt/munix-doc-portal/port.sock
+)
+if [ "$ENV_DEFAULTS" -eq 1 ]; then
+  MUVM_ARGS+=(
+    "-e" "GTK_USE_PORTAL=1" # GTK 3 including Firefox
+    "-e" "QT_QPA_PLATFORMTHEME=xdgdesktopportal"
+  )
+fi
+
+if [ "$USING_PUBLISH" -eq 1 ]; then
+  printf "\n\n\n\e[1mNote: due to a \e[31mBUG\e[39m with port publishing (-p) you have to send the first outgoing packet (e.g. ping -c1 8.8.8.8) before your ports start receiving traffic. Sorry for the inconvenience!\e[39;0m\n\n\n\n" >&2
+fi
+
+# xxx: some time is lost to the starting process..
+[[ "$(</proc/uptime)" =~ ([0-9]+)\.([0-9]+) ]]
+BOOT_TIME_OFFSET="${BASH_REMATCH[1]} $(( ${BASH_REMATCH[2]} * 1000000 ))"
+
+# Networking is gated by the runner's permission model. --unshare-all already
+# puts the guest in a fresh (loopback-only) network namespace; --share-net
+# re-shares the host network. With --no-network we omit it, leaving the guest
+# without outbound access.
+if [ "$NETWORK" -eq 1 ]; then
+  BWRAP_ARGS+=("--share-net")
+else
+  echo "munix: network disabled, guest has no outbound access" >&2
+fi
+
+# do not 'exec' because of cleanup :)
+bwrap --unshare-all \
+  --uid $MICROVM_UID --gid $MICROVM_GID \
+  --tmpfs / \
+  --dir /run --dir /var --symlink /run /var/run --dir /tmp --dir /mnt --dir /bin --dir /usr/bin \
+  --proc /proc --ro-bind /sys /sys \
+  --dev /dev --dir /dev/input --dev-bind /dev/kvm /dev/kvm \
+  --ro-bind "$MUVM_PATH" /run/munix/muvm \
+  --ro-bind "$PASST_PATH" /run/munix/passt \
+  --ro-bind "$SCRIPT_PATH/micro-activate" /opt/bin/micro-activate \
+  --ro-bind "$WL_PROXY_PATH/wl-cross-domain-proxy" /opt/bin/wl-cross-domain-proxy \
+  --ro-bind "$MUVM_PATH/muvm-guest" /opt/bin/muvm-remote \
+  --ro-bind "$MUVM_PATH/muvm-guest" /opt/bin/muvm-configure-network \
+  --ro-bind "$MUVM_PATH/muvm-guest" /opt/bin/muvm-pwbridge \
+  --ro-bind "$MUVM_PATH/muvm-guest" /opt/bin/muvm-dbusbridge \
+  --ro-bind "$MUNIX_SYSTEMD_UNITS" /opt/systemd \
+  --symlink "$MICROVM_CLOSURE/etc" /etc \
+  --symlink "$MICROVM_CLOSURE/sw/bin/sh" /bin/sh \
+  --symlink "$MICROVM_CLOSURE/sw/bin/env" /usr/bin/env \
+  --symlink "$MICROVM_CLOSURE" /run/current-system \
+  --dir /nix --ro-bind /nix/store /nix/store \
+  --file 13 /run/resolv.conf \
+  --file 14 /run/localtime \
+  --info-fd 15 \
+  --dir "$XDG_RUNTIME_DIR" \
+  --setenv PATH "/run/munix/muvm:/run/munix/passt:$MICROVM_CLOSURE/sw/bin" \
+  "${BWRAP_ARGS[@]}" \
+  muvm \
+    --custom-init-cmdline "/opt/bin/micro-activate $MICROVM_CLOSURE/sw/sbin/init --log-target=console ${EXTRA_INIT_ARGS[*]}" \
+    "${MUVM_ARGS[@]}" \
+    -e container=munix \
+    -e MICROVM_CLOSURE="$MICROVM_CLOSURE" \
+    -e MICROVM_UID="$MICROVM_UID" -e MICROVM_GID="$MICROVM_GID" \
+    -e BOOT_TIME_OFFSET="$BOOT_TIME_OFFSET" \
+    -i -t -- "${MICROVM_COMMAND[@]}" \
+  13< /etc/resolv.conf \
+  14< /etc/localtime \
+  15> >(jq -r '"munix: To run another process: munix -a " + (.["child-pid"]|tostring)')

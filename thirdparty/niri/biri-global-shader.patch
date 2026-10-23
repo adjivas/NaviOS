@@ -1,0 +1,1595 @@
+diff --git a/niri-config/src/global_shader.rs b/niri-config/src/global_shader.rs
+new file mode 100644
+index 00000000..379a016f
+--- /dev/null
++++ b/niri-config/src/global_shader.rs
+@@ -0,0 +1,295 @@
++use crate::utils::{Flag, MergeWith};
++
++/// Which animation/feedback inputs a compiled global shader references, derived by scanning
++/// the resolved source. A substring match: it may over-report (token in a comment) — which
++/// only costs extra redraws — but cannot under-report, because in GLSL a uniform must appear
++/// by its literal name to be used.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
++pub struct GlobalShaderCaps {
++    pub uses_time: bool,
++    pub uses_cursor: bool,
++    pub uses_prev: bool,
++    pub uses_buffer: bool,
++}
++
++impl GlobalShaderCaps {
++    pub fn scan(src: &str, hyprland: bool) -> Self {
++        if hyprland {
++            // Hyprland dialect aliases niri_time as `time`; it has no cursor or prev uniforms.
++            GlobalShaderCaps {
++                uses_time: src.contains("time"),
++                uses_cursor: false,
++                uses_prev: false,
++                uses_buffer: false,
++            }
++        } else {
++            // `niri_prev` is the raw sampler; `tex2D_prev` is the helper most shaders actually
++            // call. Either reference means the shader depends on the feedback buffer.
++            GlobalShaderCaps {
++                uses_time: src.contains("niri_time"),
++                uses_cursor: src.contains("niri_cursor"),
++                // Feedback: previous output, previous screen, or the dedicated buffer all evolve
++                // frame-to-frame, so any of them counts as feedback.
++                uses_prev: src.contains("niri_prev")
++                    || src.contains("tex2D_prev")
++                    || src.contains("niri_screen_prev")
++                    || src.contains("tex2D_screen_prev"),
++                uses_buffer: src.contains("global_buffer")
++                    || src.contains("niri_buffer")
++                    || src.contains("tex2D_buffer"),
++            }
++        }
++    }
++
++    /// Animating shaders depend on time or the feedback buffer, so they must redraw every frame
++    /// to progress even when the desktop is idle.
++    pub fn is_animating(&self) -> bool {
++        self.uses_time || self.uses_prev || self.uses_buffer
++    }
++}
++
++/// Redraw scheduling for the global shader. `Auto` derives the decision from [`GlobalShaderCaps`];
++/// the others force it.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
++pub enum RedrawMode {
++    #[default]
++    Auto,
++    OnDamage,
++    Continuous,
++}
++
++impl RedrawMode {
++    pub fn parse(s: &str) -> Self {
++        match s {
++            "on-damage" => RedrawMode::OnDamage,
++            "continuous" => RedrawMode::Continuous,
++            _ => RedrawMode::Auto,
++        }
++    }
++
++    /// Whether to schedule a redraw every frame (animate while idle).
++    pub fn wants_continuous_redraw(self, caps: GlobalShaderCaps) -> bool {
++        match self {
++            RedrawMode::Continuous => true,
++            RedrawMode::OnDamage => false,
++            RedrawMode::Auto => caps.is_animating(),
++        }
++    }
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct GlobalShader {
++    pub enable: bool,
++    pub source: Option<String>,
++    pub path: Option<String>,
++    pub mode: String,
++    pub reads_cursor: bool,
++    /// Effect footprint radius in logical px for cursor-local shaders; `None` = whole output.
++    pub cursor_radius: Option<u32>,
++    /// Redraw scheduling: "auto" | "on-damage" | "continuous". Parsed via `RedrawMode::parse`.
++    pub redraw: String,
++}
++
++impl Default for GlobalShader {
++    fn default() -> Self {
++        Self {
++            enable: false,
++            source: None,
++            path: None,
++            mode: String::from("niri"),
++            reads_cursor: false,
++            cursor_radius: None,
++            redraw: String::from("auto"),
++        }
++    }
++}
++
++#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq, Eq)]
++pub struct GlobalShaderPart {
++    #[knuffel(child)]
++    pub enable: Option<Flag>,
++    #[knuffel(child, unwrap(argument))]
++    pub source: Option<String>,
++    #[knuffel(child, unwrap(argument))]
++    pub path: Option<String>,
++    #[knuffel(child, unwrap(argument))]
++    pub mode: Option<String>,
++    #[knuffel(child)]
++    pub reads_cursor: Option<Flag>,
++    #[knuffel(child, unwrap(argument))]
++    pub cursor_radius: Option<u32>,
++    #[knuffel(child, unwrap(argument))]
++    pub redraw: Option<String>,
++}
++
++impl MergeWith<GlobalShaderPart> for GlobalShader {
++    fn merge_with(&mut self, part: &GlobalShaderPart) {
++        merge!((self, part), enable, reads_cursor);
++        merge_clone_opt!((self, part), source, path, cursor_radius);
++        merge_clone!((self, part), mode, redraw);
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::{GlobalShaderCaps, RedrawMode};
++    use crate::Config;
++
++    #[test]
++    fn caps_scan_niri_dialect() {
++        let c = GlobalShaderCaps::scan(
++            "vec4 global_color(vec3 c){ return tex2D_prev(c.xy)*niri_time + niri_cursor.x; }",
++            false,
++        );
++        assert_eq!(
++            c,
++            GlobalShaderCaps {
++                uses_time: true,
++                uses_cursor: true,
++                uses_prev: true,
++                uses_buffer: false
++            }
++        );
++    }
++
++    #[test]
++    fn caps_scan_static_filter() {
++        let c =
++            GlobalShaderCaps::scan("vec4 global_color(vec3 c){ return tex2D_screen(c.xy); }", false);
++        assert_eq!(c, GlobalShaderCaps::default());
++        assert!(!c.is_animating());
++    }
++
++    #[test]
++    fn caps_scan_time_only_is_animating() {
++        let c =
++            GlobalShaderCaps::scan("vec4 global_color(vec3 c){ return vec4(niri_time); }", false);
++        assert!(c.uses_time && !c.uses_cursor && !c.uses_prev);
++        assert!(c.is_animating());
++    }
++
++    #[test]
++    fn caps_scan_hyprland_dialect() {
++        // Hyprland aliases time as `time`; no cursor/prev uniforms exist.
++        let with = GlobalShaderCaps::scan("void main(){ gl_FragColor = vec4(time); }", true);
++        assert!(with.uses_time && !with.uses_cursor && !with.uses_prev);
++        let without = GlobalShaderCaps::scan(
++            "void main(){ gl_FragColor = texture2D(tex, v_texcoord); }",
++            true,
++        );
++        assert!(!without.is_animating());
++    }
++
++    #[test]
++    fn caps_scan_buffer_function() {
++        let c = GlobalShaderCaps::scan(
++            "vec4 global_buffer(vec3 c){ return tex2D_buffer(c.xy); } vec4 global_color(vec3 c){ return tex2D_screen(c.xy); }",
++            false,
++        );
++        assert!(c.uses_buffer);
++        assert!(c.is_animating());
++    }
++
++    #[test]
++    fn caps_scan_screen_prev_is_feedback() {
++        let c = GlobalShaderCaps::scan(
++            "vec4 global_color(vec3 c){ return tex2D_screen(c.xy) - tex2D_screen_prev(c.xy); }",
++            false,
++        );
++        assert!(c.uses_prev); // screen_prev folds into the feedback/animating set
++        assert!(c.is_animating());
++    }
++
++    #[test]
++    fn caps_scan_plain_filter_not_buffer() {
++        let c =
++            GlobalShaderCaps::scan("vec4 global_color(vec3 c){ return tex2D_screen(c.xy); }", false);
++        assert!(!c.uses_buffer);
++        assert!(!c.is_animating());
++    }
++
++    #[test]
++    fn redraw_mode_parse_and_decision() {
++        let animating = GlobalShaderCaps {
++            uses_time: true,
++            ..Default::default()
++        };
++        let static_ = GlobalShaderCaps::default();
++        assert!(RedrawMode::parse("auto").wants_continuous_redraw(animating));
++        assert!(!RedrawMode::parse("auto").wants_continuous_redraw(static_));
++        assert!(!RedrawMode::parse("on-damage").wants_continuous_redraw(animating));
++        assert!(RedrawMode::parse("continuous").wants_continuous_redraw(static_));
++        assert_eq!(RedrawMode::parse("bogus"), RedrawMode::Auto);
++    }
++
++    #[test]
++    fn global_shader_defaults_disabled() {
++        let config = Config::parse_mem("").unwrap();
++        assert!(!config.global_shader.enable);
++        assert_eq!(config.global_shader.mode, "niri");
++        assert!(config.global_shader.source.is_none());
++        assert!(!config.global_shader.reads_cursor);
++    }
++
++    #[test]
++    fn global_shader_inline_source() {
++        let config = Config::parse_mem(
++            r##"
++            global-shader {
++                enable
++                source "vec4 global_color(vec3 c) { return tex2D_screen(c.xy); }"
++                mode "niri"
++                reads-cursor
++            }
++            "##,
++        )
++        .unwrap();
++        assert!(config.global_shader.enable);
++        assert!(config.global_shader.reads_cursor);
++        assert_eq!(config.global_shader.mode, "niri");
++        assert_eq!(
++            config.global_shader.source.as_deref(),
++            Some("vec4 global_color(vec3 c) { return tex2D_screen(c.xy); }")
++        );
++    }
++
++    #[test]
++    fn global_shader_redraw_and_cursor_radius() {
++        let config = Config::parse_mem(
++            r##"
++            global-shader {
++                enable
++                source "vec4 global_color(vec3 c) { return tex2D_screen(c.xy); }"
++                cursor-radius 200
++                redraw "continuous"
++            }
++            "##,
++        )
++        .unwrap();
++        assert_eq!(config.global_shader.cursor_radius, Some(200));
++        assert_eq!(config.global_shader.redraw, "continuous");
++    }
++
++    #[test]
++    fn global_shader_redraw_defaults_to_auto() {
++        let config = Config::parse_mem("").unwrap();
++        assert_eq!(config.global_shader.redraw, "auto");
++        assert_eq!(config.global_shader.cursor_radius, None);
++    }
++
++    #[test]
++    fn global_shader_path_and_hyprland_mode() {
++        let config = Config::parse_mem(
++            r##"
++            global-shader {
++                enable
++                path "/tmp/crt.frag"
++                mode "hyprland"
++            }
++            "##,
++        )
++        .unwrap();
++        assert_eq!(config.global_shader.path.as_deref(), Some("/tmp/crt.frag"));
++        assert_eq!(config.global_shader.mode, "hyprland");
++    }
++}
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index f026f9bc..246b2227 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -34,6 +34,7 @@ pub mod binds;
+ pub mod debug;
+ pub mod error;
+ pub mod gestures;
++pub mod global_shader;
+ pub mod input;
+ pub mod layer_rule;
+ pub mod layout;
+@@ -50,6 +51,7 @@ pub use crate::binds::*;
+ pub use crate::debug::Debug;
+ pub use crate::error::{ConfigIncludeError, ConfigParseResult};
+ pub use crate::gestures::Gestures;
++pub use crate::global_shader::{GlobalShader, GlobalShaderCaps, GlobalShaderPart, RedrawMode};
+ pub use crate::input::{Input, ModKey, ScrollMethod, TrackLayout, WarpMouseToFocusMode, Xkb};
+ pub use crate::layer_rule::LayerRule;
+ pub use crate::layout::*;
+@@ -82,6 +84,7 @@ pub struct Config {
+     pub animations: Animations,
+     pub blur: Blur,
+     pub gestures: Gestures,
++    pub global_shader: GlobalShader,
+     pub overview: Overview,
+     pub environment: Environment,
+     pub xwayland_satellite: XwaylandSatellite,
+@@ -199,6 +202,7 @@ where
+                 "animations" => m_merge!(animations),
+                 "blur" => m_merge!(blur),
+                 "gestures" => m_merge!(gestures),
++                "global-shader" => m_merge!(global_shader),
+                 "overview" => m_merge!(overview),
+                 "xwayland-satellite" => m_merge!(xwayland_satellite),
+                 "switch-events" => m_merge!(switch_events),
+@@ -1697,6 +1701,15 @@ mod tests {
+                     bottom_right: false,
+                 },
+             },
++            global_shader: GlobalShader {
++                enable: false,
++                source: None,
++                path: None,
++                mode: "niri",
++                reads_cursor: false,
++                cursor_radius: None,
++                redraw: "auto",
++            },
+             overview: Overview {
+                 zoom: 0.5,
+                 backdrop_color: Color {
+diff --git a/resources/default-config.kdl b/resources/default-config.kdl
+index 28b45cf7..e0b2c345 100644
+--- a/resources/default-config.kdl
++++ b/resources/default-config.kdl
+@@ -304,6 +304,17 @@ animations {
+     // slowdown 3.0
+ }
+ 
++// Apply a full-screen post-process shader to everything on screen.
++// global-shader {
++//     enable
++//     // Either an inline GLSL string (niri mode: define `vec4 global_color(vec3 c)`)...
++//     source "vec4 global_color(vec3 c) { vec4 s = tex2D_screen(c.xy); return vec4(s.rgb * vec3(1.0, 0.9, 0.8), s.a); }"
++//     // ...or a path to a .frag file:
++//     // path "~/.config/niri/shaders/crt.frag"
++//     mode "niri"        // "niri" or "hyprland"
++//     // reads-cursor     // forces software cursor so the shader can read/transform the cursor
++// }
++
+ // Window rules let you adjust behavior for individual windows.
+ // Find more information on the wiki:
+ // https://niri-wm.github.io/niri/Configuration:-Window-Rules
+diff --git a/src/backend/tty.rs b/src/backend/tty.rs
+index 6dd83492..2ee6529b 100644
+--- a/src/backend/tty.rs
++++ b/src/backend/tty.rs
+@@ -64,7 +64,7 @@ use wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
+ use super::{IpcOutputMap, RenderResult};
+ use crate::backend::OutputId;
+ use crate::frame_clock::FrameClock;
+-use crate::niri::{Niri, RedrawState, State};
++use crate::niri::{global_shader_source, Niri, RedrawState, State};
+ use crate::render_helpers::debug::draw_damage;
+ use crate::render_helpers::renderer::AsGlesRenderer;
+ use crate::render_helpers::{resources, shaders, RenderCtx, RenderTarget};
+@@ -849,6 +849,11 @@ impl Tty {
+             if let Some(src) = config.animations.window_open.custom_shader.as_deref() {
+                 shaders::set_custom_open_program(gles_renderer, Some(src));
+             }
++            {
++                let src = global_shader_source(&config.global_shader);
++                let hyprland = config.global_shader.mode == "hyprland";
++                shaders::set_custom_global_program(gles_renderer, src.as_deref(), hyprland);
++            }
+             drop(config);
+ 
+             niri.update_shaders();
+@@ -1908,6 +1913,10 @@ impl Tty {
+ 
+         // Overlay planes are disabled by default as they cause weird performance issues on my
+         // system.
++        let global_shader_reads_cursor = {
++            let cfg = self.config.borrow();
++            cfg.global_shader.enable && cfg.global_shader.reads_cursor
++        };
+         let flags = {
+             let debug = &self.config.borrow().debug;
+ 
+@@ -1925,7 +1934,7 @@ impl Tty {
+                 flags.remove(primary_scanout_flag);
+                 flags.remove(FrameFlags::ALLOW_OVERLAY_PLANE_SCANOUT);
+             }
+-            if debug.disable_cursor_plane {
++            if debug.disable_cursor_plane || global_shader_reads_cursor {
+                 flags.remove(FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT);
+             }
+             if debug.skip_cursor_only_updates_during_vrr {
+@@ -1942,6 +1951,29 @@ impl Tty {
+         let drm_compositor = &mut surface.compositor;
+         match drm_compositor.render_frame::<_, _>(&mut renderer, &elements, [0.; 4], flags) {
+             Ok(res) => {
++                // Global post-process shader ping-pong: the element wrote its captured result into
++                // the shared handle during render_frame; move it into prev for the next frame.
++                if let Some(output_state) = niri.output_state.get_mut(output) {
++                    let result = output_state.global_shader_result.borrow_mut().take();
++                    if result.is_some() {
++                        output_state.global_shader_prev = result;
++                    }
++                    let screen_result = output_state
++                        .global_shader_screen_result
++                        .borrow_mut()
++                        .take();
++                    if screen_result.is_some() {
++                        output_state.global_shader_screen_prev = screen_result;
++                    }
++                    let buffer_result = output_state
++                        .global_shader_buffer_result
++                        .borrow_mut()
++                        .take();
++                    if buffer_result.is_some() {
++                        output_state.global_shader_buffer_prev = buffer_result;
++                    }
++                }
++
+                 let needs_sync = res.needs_sync()
+                     || self
+                         .config
+diff --git a/src/niri.rs b/src/niri.rs
+index fa44b5cb..18a35037 100644
+--- a/src/niri.rs
++++ b/src/niri.rs
+@@ -32,7 +32,7 @@ use smithay::backend::renderer::element::{
+     default_primary_scanout_output_compare, Element, Id, Kind, PrimaryScanoutOutput, RenderElement,
+     RenderElementStates,
+ };
+-use smithay::backend::renderer::gles::GlesRenderer;
++use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+ use smithay::backend::renderer::sync::SyncPoint;
+ use smithay::backend::renderer::Color32F;
+ use smithay::desktop::utils::{
+@@ -155,8 +155,10 @@ use crate::protocols::screencopy::{Screencopy, ScreencopyBuffer, ScreencopyManag
+ use crate::protocols::virtual_pointer::VirtualPointerManagerState;
+ use crate::render_helpers::blur::BlurOptions;
+ use crate::render_helpers::debug::push_opaque_regions;
++use crate::render_helpers::global_shader_element::GlobalShaderElement;
+ use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
+ use crate::render_helpers::renderer::NiriRenderer;
++use crate::render_helpers::shaders::{ProgramType, Shaders};
+ use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
+ use crate::render_helpers::surface::push_elements_from_surface_tree;
+ use crate::render_helpers::texture::TextureBuffer;
+@@ -196,6 +198,10 @@ const FRAME_CALLBACK_THROTTLE: Option<Duration> = Some(Duration::from_millis(995
+ pub struct Niri {
+     pub config: Rc<RefCell<Config>>,
+ 
++    /// Cached capability scan of the active global shader, invalidated on config reload.
++    /// `None` = not yet computed this load.
++    pub global_shader_caps: Cell<Option<niri_config::GlobalShaderCaps>>,
++
+     /// Output config from the config file.
+     ///
+     /// This does not include transient output config changes done via IPC. It is only used when
+@@ -488,6 +494,25 @@ pub struct OutputState {
+     pub lock_surface: Option<LockSurface>,
+     pub lock_color_buffer: SolidColorBuffer,
+     screen_transition: Option<ScreenTransition>,
++    /// Previous frame's output, fed to the global shader as `niri_prev`.
++    pub global_shader_prev: Option<GlesTexture>,
++    /// When the global shader became active; origin for `niri_time`. Interior-mutable because the
++    /// time origin is lazily initialized from the (`&self`) `render_inner` path.
++    pub global_shader_start: Cell<Option<std::time::Instant>>,
++    /// Shared sink written by `GlobalShaderElement::draw`; after the frame is submitted, its
++    /// texture is moved into `global_shader_prev` for the next frame's `niri_prev`.
++    pub global_shader_result: Rc<RefCell<Option<GlesTexture>>>,
++    /// Previous frame's `niri_screen` capture (screen only), exposed as `niri_screen_prev`.
++    pub global_shader_screen_prev: Option<GlesTexture>,
++    /// Sink written by `GlobalShaderElement::draw` with this frame's screen capture; moved into
++    /// `global_shader_screen_prev` after submit.
++    pub global_shader_screen_result: Rc<RefCell<Option<GlesTexture>>>,
++    /// Offscreen target for the global shader's dedicated feedback buffer pass.
++    pub global_shader_buffer: Rc<crate::render_helpers::offscreen::OffscreenBuffer>,
++    /// Last frame's feedback buffer, bound as `niri_buffer`.
++    pub global_shader_buffer_prev: Option<GlesTexture>,
++    /// Sink for this frame's buffer texture; moved into `global_shader_buffer_prev` after submit.
++    pub global_shader_buffer_result: Rc<RefCell<Option<GlesTexture>>>,
+     /// Damage tracker used for the debug damage visualization.
+     pub debug_damage_tracker: OutputDamageTracker,
+ }
+@@ -1595,6 +1620,34 @@ impl State {
+             shaders_changed = true;
+         }
+ 
++        if config.global_shader.enable != old_config.global_shader.enable
++            || config.global_shader.source != old_config.global_shader.source
++            || config.global_shader.path != old_config.global_shader.path
++            || config.global_shader.mode != old_config.global_shader.mode
++            || config.global_shader.redraw != old_config.global_shader.redraw
++            || config.global_shader.cursor_radius != old_config.global_shader.cursor_radius
++        {
++            let src = global_shader_source(&config.global_shader);
++            let hyprland = config.global_shader.mode == "hyprland";
++            self.backend.with_primary_renderer(|renderer| {
++                shaders::set_custom_global_program(renderer, src.as_deref(), hyprland);
++            });
++            // Reset per-output time origin / prev texture on (re)load.
++            for state in self.niri.output_state.values_mut() {
++                state.global_shader_start.set(None);
++                state.global_shader_prev = None;
++                *state.global_shader_result.borrow_mut() = None;
++                state.global_shader_screen_prev = None;
++                *state.global_shader_screen_result.borrow_mut() = None;
++                state.global_shader_buffer_prev = None;
++                *state.global_shader_buffer_result.borrow_mut() = None;
++                // OffscreenBuffer recreates its texture on demand; leave it.
++            }
++            // Recompute capability flags on next use.
++            self.niri.global_shader_caps.set(None);
++            shaders_changed = true;
++        }
++
+         if config.cursor.hide_after_inactive_ms != old_config.cursor.hide_after_inactive_ms {
+             cursor_inactivity_timeout_changed = true;
+         }
+@@ -2254,6 +2307,25 @@ impl State {
+ }
+ 
+ impl Niri {
++    /// Capability flags for the active global shader, computed once per config load and cached.
++    /// On a cache miss this resolves the source (reading the `path` file if used), so callers
++    /// may hit one filesystem read after a reload; subsequent calls are free.
++    pub fn global_shader_caps(&self) -> niri_config::GlobalShaderCaps {
++        if let Some(caps) = self.global_shader_caps.get() {
++            return caps;
++        }
++        let caps = {
++            let cfg = self.config.borrow();
++            let hyprland = cfg.global_shader.mode == "hyprland";
++            match global_shader_source(&cfg.global_shader) {
++                Some(src) => niri_config::GlobalShaderCaps::scan(&src, hyprland),
++                None => niri_config::GlobalShaderCaps::default(),
++            }
++        };
++        self.global_shader_caps.set(Some(caps));
++        caps
++    }
++
+     pub fn new(
+         config: Rc<RefCell<Config>>,
+         event_loop: LoopHandle<'static, State>,
+@@ -2516,6 +2588,7 @@ impl Niri {
+         drop(config_);
+         let mut niri = Self {
+             config,
++            global_shader_caps: Cell::new(None),
+             config_file_output_config,
+             config_file_watcher: None,
+ 
+@@ -2908,6 +2981,16 @@ impl Niri {
+             lock_surface: None,
+             lock_color_buffer: SolidColorBuffer::new(size, CLEAR_COLOR_LOCKED),
+             screen_transition: None,
++            global_shader_prev: None,
++            global_shader_start: Cell::new(None),
++            global_shader_result: Rc::new(RefCell::new(None)),
++            global_shader_screen_prev: None,
++            global_shader_screen_result: Rc::new(RefCell::new(None)),
++            global_shader_buffer: Rc::new(
++                crate::render_helpers::offscreen::OffscreenBuffer::default(),
++            ),
++            global_shader_buffer_prev: None,
++            global_shader_buffer_result: Rc::new(RefCell::new(None)),
+             debug_damage_tracker: OutputDamageTracker::from_output(&output),
+         };
+         let rv = self.output_state.insert(output.clone(), state);
+@@ -4242,11 +4325,138 @@ impl Niri {
+             push
+         };
+ 
+-        // The pointer goes on the top.
++        // Global post-process shader: only push for the real Output sink (never screenshots or
++        // screencopy), so the effect does not leak into recordings and the per-output ping-pong
++        // state is not corrupted by capture renders. A compiled program is also required; this
++        // gate has zero overhead when no program is loaded.
++        //
++        // When reads_cursor is active, the element must render ABOVE the cursor (pushed before
++        // render_pointer) so the cursor is captured into the screen texture. Otherwise it renders
++        // BELOW the cursor (pushed after render_pointer) so the hardware cursor is unaffected.
++        let reads_cursor = {
++            let cfg = self.config.borrow();
++            cfg.global_shader.enable && cfg.global_shader.reads_cursor
++        };
++        let mut global_shader_elem: Option<GlobalShaderElement> = if ctx.target
++            == RenderTarget::Output
++            && Shaders::get(ctx.renderer)
++                .program(ProgramType::Global)
++                .is_some()
++        {
++            let start = state.global_shader_start.get().unwrap_or_else(|| {
++                let now = std::time::Instant::now();
++                state.global_shader_start.set(Some(now));
++                now
++            });
++            let time = start.elapsed().as_secs_f32();
++            let scale = output.current_scale().fractional_scale() as f32;
++            let area = Rectangle::from_size(output_size(output));
++
++            // Cursor in output-local physical pixels (same source as render_pointer).
++            let output_pos = self.global_space.output_geometry(output).unwrap().loc;
++            let pointer_pos = self
++                .tablet_cursor_location
++                .unwrap_or_else(|| self.seat.get_pointer().unwrap().current_location());
++            let pointer_local = pointer_pos - output_pos.to_f64();
++            let cursor = (
++                (pointer_local.x * scale as f64) as f32,
++                (pointer_local.y * scale as f64) as f32,
++            );
++
++            let output_size_phys = (
++                (area.size.w * scale as f64) as f32,
++                (area.size.h * scale as f64) as f32,
++            );
++
++            // Region-local rendering: when cursor-radius is set on a cursor-only (non-animating)
++            // shader, shrink the element to a box around the cursor so damage + scanout are
++            // limited to that box. Otherwise cover the whole output.
++            let caps = self.global_shader_caps();
++            let cursor_radius = self.config.borrow().global_shader.cursor_radius;
++            let (area, region_norm) = match cursor_radius {
++                Some(r) if caps.uses_cursor && !caps.is_animating() && r > 0 => {
++                    let r = r as f64; // logical px
++                    let full = area;
++                    let box_loc = (
++                        (pointer_local.x - r).max(full.loc.x),
++                        (pointer_local.y - r).max(full.loc.y),
++                    );
++                    let box_end = (
++                        (pointer_local.x + r).min(full.loc.x + full.size.w),
++                        (pointer_local.y + r).min(full.loc.y + full.size.h),
++                    );
++                    let box_rect = Rectangle::new(
++                        (box_loc.0, box_loc.1).into(),
++                        (
++                            (box_end.0 - box_loc.0).max(0.0),
++                            (box_end.1 - box_loc.1).max(0.0),
++                        )
++                            .into(),
++                    );
++                    if box_rect.size.w <= 0.0 || box_rect.size.h <= 0.0 {
++                        // Cursor is off this output (e.g. on another monitor) so the clamped box
++                        // is empty: render whole-output here. A zero-size region would otherwise
++                        // divide by zero in the shader's tex2D_* remap.
++                        (full, [0.0, 0.0, 1.0, 1.0])
++                    } else {
++                        let region_norm = [
++                            ((box_rect.loc.x - full.loc.x) / full.size.w) as f32,
++                            ((box_rect.loc.y - full.loc.y) / full.size.h) as f32,
++                            (box_rect.size.w / full.size.w) as f32,
++                            (box_rect.size.h / full.size.h) as f32,
++                        ];
++                        (box_rect, region_norm)
++                    }
++                }
++                _ => (area, [0.0, 0.0, 1.0, 1.0]),
++            };
++
++            // A fresh Id every frame makes smithay damage both the new box and the vacated old
++            // box (the removed element's last geometry), which is what gives region mode its
++            // correct box(cursor) ∪ box(prev_cursor) damage. If this is ever changed to a stable
++            // per-output Id for a damage optimization, region mode must damage the vacated box
++            // explicitly or moving-cursor effects will leave trails.
++            Some(GlobalShaderElement::new(
++                Id::new(),
++                area,
++                scale,
++                time,
++                cursor,
++                region_norm,
++                output_size_phys,
++                state.global_shader_prev.clone(),
++                state.global_shader_screen_prev.clone(),
++                state.global_shader_screen_result.clone(),
++                state.global_shader_buffer.clone(),
++                state.global_shader_buffer_prev.clone(),
++                state.global_shader_buffer_result.clone(),
++                state.global_shader_result.clone(),
++            ))
++        } else {
++            None
++        };
++
++        // When reads_cursor is on, push the global shader element first so the cursor is
++        // composited into niri_screen (the cursor becomes part of the captured screen texture).
++        if reads_cursor {
++            if let Some(elem) = global_shader_elem.take() {
++                push(elem.into());
++            }
++        }
++
++        // The pointer goes on the top (or below the global shader when reads_cursor is on).
+         if include_pointer && self.pointer_visibility.is_visible() {
+             self.render_pointer(ctx.renderer, output, &mut |elem| push(elem.into()));
+         }
+ 
++        // When reads_cursor is off (default), push the global shader element after the pointer
++        // so the hardware cursor remains above the effect.
++        if !reads_cursor {
++            if let Some(elem) = global_shader_elem {
++                push(elem.into());
++            }
++        }
++
+         // Next, the screen transition texture.
+         {
+             if let Some(transition) = &state.screen_transition {
+@@ -4628,6 +4838,16 @@ impl Niri {
+ 
+         let mut res = RenderResult::Skipped;
+         if self.monitors_active {
++            // Decide whether a time/feedback-driven global shader needs continuous redraws.
++            // Computed before the `&mut state` borrow below, since this reads `&self`.
++            let global_shader_animate = {
++                let cfg = self.config.borrow();
++                let enabled = cfg.global_shader.enable;
++                let mode = niri_config::RedrawMode::parse(&cfg.global_shader.redraw);
++                drop(cfg);
++                enabled && mode.wants_continuous_redraw(self.global_shader_caps())
++            };
++
+             let state = self.output_state.get_mut(output).unwrap();
+             state.unfinished_animations_remain = self.layout.are_animations_ongoing(Some(output));
+             state.unfinished_animations_remain |=
+@@ -4650,6 +4870,9 @@ impl Niri {
+                     .any(|mapped| mapped.are_animations_ongoing());
+             }
+ 
++            // Time/feedback-driven global shaders must keep redrawing to animate when idle.
++            state.unfinished_animations_remain |= global_shader_animate;
++
+             // Render.
+             res = backend.render(self, output, target_presentation_time);
+         }
+@@ -6519,6 +6742,51 @@ impl ClientData for ClientState {
+     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+ }
+ 
++/// Resolves the global post-process shader source from config: inline `source` vs `path`.
++///
++/// Returns `None` (and warns) when disabled, when neither/both of `source`/`path` are set, when an
++/// inline source is empty, or when a path can't be read.
++pub(crate) fn global_shader_source(cfg: &niri_config::GlobalShader) -> Option<String> {
++    if !cfg.enable {
++        return None;
++    }
++    match (&cfg.source, &cfg.path) {
++        (Some(s), None) => {
++            if s.trim().is_empty() {
++                warn!("global-shader: empty source, disabling");
++                None
++            } else {
++                Some(s.clone())
++            }
++        }
++        (None, Some(p)) => {
++            let path = match expand_home(std::path::Path::new(p)) {
++                Ok(Some(expanded)) => expanded,
++                Ok(None) => std::path::PathBuf::from(p),
++                Err(err) => {
++                    warn!("global-shader: cannot expand path {p:?}: {err}; disabling");
++                    return None;
++                }
++            };
++            match std::fs::read_to_string(&path) {
++                Ok(s) => Some(s),
++                Err(err) => {
++                    warn!("global-shader: cannot read path {p:?}: {err}; disabling");
++                    None
++                }
++            }
++        }
++        (Some(_), Some(_)) => {
++            warn!("global-shader: both source and path set, disabling");
++            None
++        }
++        (None, None) => {
++            warn!("global-shader: enabled but no source or path, disabling");
++            None
++        }
++    }
++}
++
+ fn scale_relocate_crop<E: Element>(
+     elem: E,
+     output_scale: Scale<f64>,
+@@ -6565,5 +6833,6 @@ niri_render_elements! {
+         Texture = PrimaryGpuTextureRenderElement,
+         // Used for the CPU-rendered panels.
+         RelocatedMemoryBuffer = RelocateRenderElement<MemoryRenderBufferRenderElement<R>>,
++        GlobalShader = GlobalShaderElement,
+     }
+ }
+diff --git a/src/render_helpers/capture.rs b/src/render_helpers/capture.rs
+new file mode 100644
+index 00000000..8620438d
+--- /dev/null
++++ b/src/render_helpers/capture.rs
+@@ -0,0 +1,62 @@
++use smithay::backend::renderer::gles::{ffi, GlesError, GlesFrame, GlesTexture};
++use smithay::backend::renderer::Texture as _;
++use smithay::utils::{Physical, Rectangle};
++
++/// Blit the `dst` region of the frame's current DRAW framebuffer into `into`.
++///
++/// Binds a temporary FBO with `into` as `COLOR_ATTACHMENT0`, disables the scissor test,
++/// blits the `dst` region into `(0, 0, size)` of `into`, then restores the previous state
++/// and deletes the temporary FBO.
++pub fn capture_framebuffer_region(
++    frame: &mut GlesFrame<'_, '_>,
++    dst: Rectangle<i32, Physical>,
++    into: &GlesTexture,
++) -> Result<(), GlesError> {
++    let size = into.size();
++    frame.with_context(|gl| unsafe {
++        while gl.GetError() != ffi::NO_ERROR {}
++
++        let mut current_fbo = 0i32;
++        gl.GetIntegerv(ffi::DRAW_FRAMEBUFFER_BINDING, &mut current_fbo as *mut _);
++
++        // BlitFramebuffer is affected by the scissor test, we don't want that.
++        gl.Disable(ffi::SCISSOR_TEST);
++
++        let mut fbo = 0;
++        gl.GenFramebuffers(1, &mut fbo as *mut _);
++        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, fbo);
++
++        gl.FramebufferTexture2D(
++            ffi::DRAW_FRAMEBUFFER,
++            ffi::COLOR_ATTACHMENT0,
++            ffi::TEXTURE_2D,
++            into.tex_id(),
++            0,
++        );
++
++        gl.BlitFramebuffer(
++            dst.loc.x,
++            dst.loc.y,
++            dst.loc.x + dst.size.w,
++            dst.loc.y + dst.size.h,
++            0,
++            0,
++            size.w,
++            size.h,
++            ffi::COLOR_BUFFER_BIT,
++            ffi::LINEAR,
++        );
++
++        // Restore state set by GlesFrame that we just modified.
++        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, current_fbo as u32);
++        gl.Enable(ffi::SCISSOR_TEST);
++
++        gl.DeleteFramebuffers(1, &mut fbo as *mut _);
++
++        if gl.GetError() != ffi::NO_ERROR {
++            Err(GlesError::BlitError)
++        } else {
++            Ok(())
++        }
++    })?
++}
+diff --git a/src/render_helpers/framebuffer_effect.rs b/src/render_helpers/framebuffer_effect.rs
+index 4e5a6163..9f9cb876 100644
+--- a/src/render_helpers/framebuffer_effect.rs
++++ b/src/render_helpers/framebuffer_effect.rs
+@@ -4,9 +4,7 @@ use glam::{Mat3, Vec2};
+ use niri_config::CornerRadius;
+ use smithay::backend::allocator::Fourcc;
+ use smithay::backend::renderer::element::{Element, Id, RenderElement};
+-use smithay::backend::renderer::gles::{
+-    ffi, GlesError, GlesFrame, GlesRenderer, GlesTexture, Uniform,
+-};
++use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture, Uniform};
+ use smithay::backend::renderer::utils::CommitCounter;
+ use smithay::backend::renderer::{Frame as _, FrameContext, Offscreen, Texture as _};
+ use smithay::gpu_span_location;
+@@ -16,6 +14,7 @@ use smithay::utils::{Buffer, Logical, Physical, Rectangle, Scale, Transform};
+ use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
+ use crate::render_helpers::background_effect::RenderParams;
+ use crate::render_helpers::blur::{Blur, BlurOptions};
++use crate::render_helpers::capture;
+ use crate::render_helpers::renderer::AsGlesFrame as _;
+ use crate::render_helpers::shaders::{mat3_uniform, Shaders};
+ use crate::utils::region::TransformedRegion;
+@@ -247,55 +246,11 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
+ 
+             // We can't use renderer.with_context() as that will reset the GlesFrame binding that we
+             // want to blit from.
++            let framebuffer = framebuffer.clone();
+             drop(guard);
+ 
+             // Blit the framebuffer contents.
+-            frame.with_context(|gl| unsafe {
+-                while gl.GetError() != ffi::NO_ERROR {}
+-
+-                let mut current_fbo = 0i32;
+-                gl.GetIntegerv(ffi::DRAW_FRAMEBUFFER_BINDING, &mut current_fbo as *mut _);
+-
+-                // BlitFramebuffer is affected by the scissor test, we don't want that.
+-                gl.Disable(ffi::SCISSOR_TEST);
+-
+-                let mut fbo = 0;
+-                gl.GenFramebuffers(1, &mut fbo as *mut _);
+-                gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, fbo);
+-
+-                gl.FramebufferTexture2D(
+-                    ffi::DRAW_FRAMEBUFFER,
+-                    ffi::COLOR_ATTACHMENT0,
+-                    ffi::TEXTURE_2D,
+-                    framebuffer.tex_id(),
+-                    0,
+-                );
+-
+-                gl.BlitFramebuffer(
+-                    dst.loc.x,
+-                    dst.loc.y,
+-                    dst.loc.x + dst.size.w,
+-                    dst.loc.y + dst.size.h,
+-                    0,
+-                    0,
+-                    size.w,
+-                    size.h,
+-                    ffi::COLOR_BUFFER_BIT,
+-                    ffi::LINEAR,
+-                );
+-
+-                // Restore state set by GlesFrame that we just modified.
+-                gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, current_fbo as u32);
+-                gl.Enable(ffi::SCISSOR_TEST);
+-
+-                gl.DeleteFramebuffers(1, &mut fbo as *mut _);
+-
+-                if gl.GetError() != ffi::NO_ERROR {
+-                    Err(GlesError::BlitError)
+-                } else {
+-                    Ok(())
+-                }
+-            })??;
++            capture::capture_framebuffer_region(frame, dst, &framebuffer)?;
+ 
+             // If blur is off, use the unblurred texture.
+             if self.blur_options.is_none() {
+@@ -306,7 +261,7 @@ impl RenderElement<GlesRenderer> for FramebufferEffectElement {
+             if let Some((blur, options)) = blur {
+                 let mut guard = frame.renderer();
+                 let renderer = guard.as_mut();
+-                match blur.render(renderer, framebuffer, options) {
++                match blur.render(renderer, &framebuffer, options) {
+                     Ok(blurred) => inner.intermediate = Some(blurred),
+                     Err(err) => {
+                         warn!("error rendering blur: {err:?}");
+diff --git a/src/render_helpers/global_shader_element.rs b/src/render_helpers/global_shader_element.rs
+new file mode 100644
+index 00000000..310aa74c
+--- /dev/null
++++ b/src/render_helpers/global_shader_element.rs
+@@ -0,0 +1,311 @@
++use std::cell::RefCell;
++use std::collections::HashMap;
++use std::rc::Rc;
++
++use smithay::backend::allocator::Fourcc;
++use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement};
++use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture, Uniform};
++use smithay::backend::renderer::utils::CommitCounter;
++use smithay::backend::renderer::{Frame as _, FrameContext as _, Offscreen, Texture as _};
++use smithay::utils::user_data::UserDataMap;
++use smithay::utils::{Buffer, Logical, Physical, Rectangle, Scale, Transform};
++
++use crate::backend::tty::{TtyFrame, TtyRenderer, TtyRendererError};
++use crate::render_helpers::capture;
++use crate::render_helpers::renderer::AsGlesFrame as _;
++use crate::render_helpers::shader_element::ShaderRenderElement;
++use crate::render_helpers::shaders::{ProgramType, Shaders};
++
++/// A render element that captures the composited framebuffer below it and re-draws it through the
++/// global post-process program.
++///
++/// After `draw()` completes, the rendered result is written into the shared `result` handle so the
++/// caller (`OutputState`) can pick it up after the frame is submitted, for prev-frame ping-pong.
++/// The handle is an `Rc<RefCell<..>>` shared with `OutputState.global_shader_result`.
++#[derive(Debug, Clone)]
++pub struct GlobalShaderElement {
++    id: Id,
++    commit: CommitCounter,
++    area: Rectangle<f64, Logical>,
++    scale: f32,
++    time: f32,
++    cursor: (f32, f32),
++    /// Region this element covers in output-normalised coords: [origin.x, origin.y, w, h].
++    /// `[0.0, 0.0, 1.0, 1.0]` = whole output.
++    region_norm: [f32; 4],
++    /// True full-output size in physical px (for the `niri_output_size` uniform).
++    output_size_phys: (f32, f32),
++    prev: Option<GlesTexture>,
++    /// Previous frame's screen capture, bound as `niri_screen_prev`.
++    screen_prev: Option<GlesTexture>,
++    /// Sink for this frame's screen capture (clone of `screen_tex`), ping-ponged like `result`.
++    screen_result: Rc<RefCell<Option<GlesTexture>>>,
++    /// Offscreen target for the buffer pass (shared with OutputState; interior-mutable).
++    buffer: Rc<crate::render_helpers::offscreen::OffscreenBuffer>,
++    /// Last frame's feedback buffer, bound as `niri_buffer`.
++    buffer_prev: Option<GlesTexture>,
++    /// Sink for this frame's buffer texture, ping-ponged.
++    buffer_result: Rc<RefCell<Option<GlesTexture>>>,
++    /// Shared sink for the captured result of this element's draw pass, used for prev-frame
++    /// ping-pong. After the frame is submitted, the owner takes the texture out of this handle and
++    /// moves it into `global_shader_prev`.
++    result: Rc<RefCell<Option<GlesTexture>>>,
++}
++
++impl GlobalShaderElement {
++    pub fn new(
++        id: Id,
++        area: Rectangle<f64, Logical>,
++        scale: f32,
++        time: f32,
++        cursor: (f32, f32),
++        region_norm: [f32; 4],
++        output_size_phys: (f32, f32),
++        prev: Option<GlesTexture>,
++        screen_prev: Option<GlesTexture>,
++        screen_result: Rc<RefCell<Option<GlesTexture>>>,
++        buffer: Rc<crate::render_helpers::offscreen::OffscreenBuffer>,
++        buffer_prev: Option<GlesTexture>,
++        buffer_result: Rc<RefCell<Option<GlesTexture>>>,
++        result: Rc<RefCell<Option<GlesTexture>>>,
++    ) -> Self {
++        Self {
++            id,
++            commit: CommitCounter::default(),
++            area,
++            scale,
++            time,
++            cursor,
++            region_norm,
++            output_size_phys,
++            prev,
++            screen_prev,
++            screen_result,
++            buffer,
++            buffer_prev,
++            buffer_result,
++            result,
++        }
++    }
++}
++
++impl Element for GlobalShaderElement {
++    fn id(&self) -> &Id {
++        &self.id
++    }
++
++    fn current_commit(&self) -> CommitCounter {
++        self.commit
++    }
++
++    fn src(&self) -> Rectangle<f64, Buffer> {
++        let size = self.area.size.to_buffer(1., Transform::Normal);
++        Rectangle::from_size(size)
++    }
++
++    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
++        self.area.to_physical_precise_round(scale)
++    }
++
++    // We intentionally do not override `opaque_regions`: the default returns empty regions, which
++    // is what we want since the shader may produce translucency and reads what's below.
++}
++
++impl RenderElement<GlesRenderer> for GlobalShaderElement {
++    fn draw(
++        &self,
++        frame: &mut GlesFrame<'_, '_>,
++        _src: Rectangle<f64, Buffer>,
++        dst: Rectangle<i32, Physical>,
++        damage: &[Rectangle<i32, Physical>],
++        _opaque_regions: &[Rectangle<i32, Physical>],
++        _cache: Option<&UserDataMap>,
++    ) -> Result<(), GlesError> {
++        let _span = tracy_client::span!("GlobalShaderElement::draw");
++
++        // Allocate the niri_screen texture sized to the physical dst region, then capture the
++        // framebuffer below into it.
++        let buffer_size = dst.size.to_logical(1).to_buffer(1, Transform::Normal);
++        let screen_tex = {
++            let mut guard = frame.renderer();
++            let renderer = guard.as_mut();
++            renderer.create_buffer(Fourcc::Abgr8888, buffer_size)?
++            // guard dropped here so the GlesFrame binding is restored before the blit.
++        };
++
++        capture::capture_framebuffer_region(frame, dst, &screen_tex)?;
++
++        // Stash this frame's screen capture for next frame's niri_screen_prev.
++        *self.screen_result.borrow_mut() = Some(screen_tex.clone());
++
++        let program = Shaders::get_from_frame(frame).program(ProgramType::Global);
++        let Some(_program) = program else {
++            // No global program: draw the captured screen unchanged.
++            return frame.render_texture_from_to(
++                &screen_tex,
++                Rectangle::from_size(screen_tex.size().to_f64()),
++                dst,
++                damage,
++                &[],
++                frame.transformation().invert(),
++                1.,
++                None,
++                &[],
++            );
++        };
++
++        // Empty-feedback seed: on the first frame niri_prev / niri_buffer has no prior
++        // value; seed with black so accumulators start empty instead of ingesting the live screen.
++        let black = Shaders::get_from_frame(frame).black_texture.clone();
++
++        let prev_tex = self.prev.clone().unwrap_or_else(|| black.clone());
++        // Previous frame's screen; falls back to this frame's screen on the first frame.
++        let screen_prev_tex = self.screen_prev.clone().unwrap_or_else(|| screen_tex.clone());
++
++        let uniforms: Rc<[Uniform<'static>]> = Rc::new([
++            Uniform::new("niri_time", self.time),
++            Uniform::new("niri_cursor", (self.cursor.0, self.cursor.1)),
++            Uniform::new(
++                "niri_region",
++                (
++                    self.region_norm[0],
++                    self.region_norm[1],
++                    self.region_norm[2],
++                    self.region_norm[3],
++                ),
++            ),
++            Uniform::new(
++                "niri_output_size",
++                (self.output_size_phys.0, self.output_size_phys.1),
++            ),
++        ]);
++
++        // --- Dedicated feedback buffer pass ---
++        // If the source defines global_buffer, render it into a clean offscreen texture (reading
++        // last frame's buffer) and feed THAT as niri_buffer. Otherwise niri_buffer == niri_prev.
++        // OffscreenBuffer recreates its texture when we hold a clone of the previous one, which
++        // gives ping-pong for free (read buffer_prev, write a fresh texture).
++        let buffer_tex = if Shaders::get_from_frame(frame)
++            .program(ProgramType::GlobalBuffer)
++            .is_some()
++        {
++            // First frame (or after reload): seed niri_buffer with black rather than
++            // ingesting screen content.
++            let buf_prev = self
++                .buffer_prev
++                .clone()
++                .unwrap_or_else(|| black.clone());
++
++            let mut buf_textures = HashMap::new();
++            buf_textures.insert("niri_screen".to_string(), screen_tex.clone());
++            buf_textures.insert("niri_prev".to_string(), prev_tex.clone());
++            buf_textures.insert("niri_screen_prev".to_string(), screen_prev_tex.clone());
++            buf_textures.insert("niri_buffer".to_string(), buf_prev);
++
++            let buf_element = ShaderRenderElement::new(
++                ProgramType::GlobalBuffer,
++                self.area.size,
++                None,
++                self.scale,
++                1.,
++                uniforms.clone(),
++                buf_textures,
++                Kind::Unspecified,
++            );
++
++            let mut guard = frame.renderer();
++            let renderer = guard.as_mut();
++            match self
++                .buffer
++                .render(renderer, Scale::from(self.scale as f64), &[buf_element])
++            {
++                Ok((off_elem, _sync, _data)) => {
++                    let next = off_elem.texture().clone();
++                    drop(guard);
++                    // DO NOT remove this retained clone. It is what forces OffscreenBuffer to
++                    // allocate a *distinct* write texture next frame (its `is_unique_reference`
++                    // check): without an external clone alive, next frame's buffer pass would read
++                    // and write the same texture and corrupt the feedback. The clone also lets the
++                    // owner move this texture into global_shader_buffer_prev after submit.
++                    *self.buffer_result.borrow_mut() = Some(next.clone());
++                    next
++                }
++                Err(err) => {
++                    drop(guard);
++                    warn!("global_buffer pass failed: {err:?}");
++                    prev_tex.clone()
++                }
++            }
++        } else {
++            prev_tex.clone()
++        };
++
++        let mut textures = HashMap::new();
++        textures.insert("niri_screen".to_string(), screen_tex);
++        textures.insert("niri_prev".to_string(), prev_tex.clone());
++        textures.insert("niri_screen_prev".to_string(), screen_prev_tex);
++        textures.insert("niri_buffer".to_string(), buffer_tex);
++
++        // Delegate the actual program pass (named samplers + custom uniforms) to
++        // ShaderRenderElement, which already implements the GL uniform/texture binding.
++        let element = ShaderRenderElement::new(
++            ProgramType::Global,
++            self.area.size,
++            None,
++            self.scale,
++            1.,
++            uniforms,
++            textures,
++            Kind::Unspecified,
++        );
++
++        // ShaderRenderElement::src() is the unit rectangle, so pass a unit src for a 1:1
++        // full-screen mapping of the captured texture onto dst.
++        RenderElement::<GlesRenderer>::draw(
++            &element,
++            frame,
++            Rectangle::from_size((1., 1.).into()),
++            dst,
++            damage,
++            &[],
++            None,
++        )?;
++
++        // Capture the rendered result for prev-frame ping-pong. The shared handle is also held by
++        // OutputState.global_shader_result; after the frame is submitted, the owner moves this into
++        // OutputState.global_shader_prev.
++        let result_tex = {
++            let mut guard = frame.renderer();
++            let renderer = guard.as_mut();
++            renderer.create_buffer(Fourcc::Abgr8888, buffer_size)?
++        };
++        capture::capture_framebuffer_region(frame, dst, &result_tex)?;
++        *self.result.borrow_mut() = Some(result_tex);
++
++        Ok(())
++    }
++}
++
++impl<'render> RenderElement<TtyRenderer<'render>> for GlobalShaderElement {
++    fn draw(
++        &self,
++        frame: &mut TtyFrame<'_, '_, '_>,
++        src: Rectangle<f64, Buffer>,
++        dst: Rectangle<i32, Physical>,
++        damage: &[Rectangle<i32, Physical>],
++        opaque_regions: &[Rectangle<i32, Physical>],
++        cache: Option<&UserDataMap>,
++    ) -> Result<(), TtyRendererError<'render>> {
++        let gles_frame = frame.as_gles_frame();
++        RenderElement::<GlesRenderer>::draw(
++            self,
++            gles_frame,
++            src,
++            dst,
++            damage,
++            opaque_regions,
++            cache,
++        )?;
++        Ok(())
++    }
++}
+diff --git a/src/render_helpers/mod.rs b/src/render_helpers/mod.rs
+index 474437af..6c19c0ec 100644
+--- a/src/render_helpers/mod.rs
++++ b/src/render_helpers/mod.rs
+@@ -29,11 +29,13 @@ use crate::render_helpers::xray::Xray;
+ pub mod background_effect;
+ pub mod blur;
+ pub mod border;
++pub mod capture;
+ pub mod clipped_surface;
+ pub mod damage;
+ pub mod debug;
+ pub mod effect_buffer;
+ pub mod framebuffer_effect;
++pub mod global_shader_element;
+ pub mod gradient_fade_texture;
+ pub mod memory;
+ pub mod offscreen;
+diff --git a/src/render_helpers/shaders/global_buffer_epilogue.frag b/src/render_helpers/shaders/global_buffer_epilogue.frag
+new file mode 100644
+index 00000000..e91e0fdb
+--- /dev/null
++++ b/src/render_helpers/shaders/global_buffer_epilogue.frag
+@@ -0,0 +1,5 @@
++
++void main() {
++    vec3 coord = vec3(niri_region.xy + niri_v_coords * niri_region.zw, 1.0);
++    gl_FragColor = global_buffer(coord);
++}
+diff --git a/src/render_helpers/shaders/global_epilogue.frag b/src/render_helpers/shaders/global_epilogue.frag
+new file mode 100644
+index 00000000..fba7d5cc
+--- /dev/null
++++ b/src/render_helpers/shaders/global_epilogue.frag
+@@ -0,0 +1,14 @@
++
++void main() {
++    vec3 coord = vec3(niri_region.xy + niri_v_coords * niri_region.zw, 1.0);
++    vec4 color = global_color(coord);
++
++    color = color * niri_alpha;
++
++#if defined(DEBUG_FLAGS)
++    if (niri_tint == 1.0)
++        color = vec4(0.0, 0.2, 0.0, 0.2) + color * 0.8;
++#endif
++
++    gl_FragColor = color;
++}
+diff --git a/src/render_helpers/shaders/global_hypr_prelude.frag b/src/render_helpers/shaders/global_hypr_prelude.frag
+new file mode 100644
+index 00000000..d4579917
+--- /dev/null
++++ b/src/render_helpers/shaders/global_hypr_prelude.frag
+@@ -0,0 +1,12 @@
++precision highp float;
++
++varying vec2 niri_v_coords;
++uniform sampler2D niri_screen;
++uniform float niri_time;
++
++#define tex niri_screen
++#define v_texcoord niri_v_coords
++#define time niri_time
++#define wl_output 0
++
++// Hyprland-style user shader (its own main(), writes gl_FragColor) appended below.
+diff --git a/src/render_helpers/shaders/global_prelude.frag b/src/render_helpers/shaders/global_prelude.frag
+new file mode 100644
+index 00000000..72401f92
+--- /dev/null
++++ b/src/render_helpers/shaders/global_prelude.frag
+@@ -0,0 +1,34 @@
++precision highp float;
++
++#if defined(DEBUG_FLAGS)
++uniform float niri_tint;
++#endif
++
++varying vec2 niri_v_coords;   // 0..1 across this element (remapped to output coords via niri_region)
++uniform vec2 niri_size;       // element size in physical px (box size in region mode; see niri_output_size)
++uniform float niri_scale;
++uniform float niri_alpha;
++
++uniform float niri_time;      // seconds since shader activation
++uniform vec2 niri_cursor;     // cursor position, output coords (px)
++
++// Region this element covers, in output-normalised coords: (origin.xy, size.xy).
++// (0,0,1,1) for a whole-output shader; a sub-box when cursor-radius is set.
++uniform vec4 niri_region;
++uniform vec2 niri_output_size; // true full-output size in physical px
++
++uniform sampler2D niri_screen; // composited frame below this element (covers niri_region)
++uniform sampler2D niri_prev;   // previous frame's output
++uniform sampler2D niri_screen_prev; // previous frame's niri_screen capture (screen only, no effect)
++
++// uv is output-normalised (0..1 across the whole output); convert to this element's local
++// texture coords. Samples outside the captured region clamp to the (transparent) border.
++vec4 tex2D_screen(vec2 uv) { return texture2D(niri_screen, (uv - niri_region.xy) / niri_region.zw); }
++vec4 tex2D_prev(vec2 uv) { return texture2D(niri_prev, (uv - niri_region.xy) / niri_region.zw); }
++vec4 tex2D_screen_prev(vec2 uv) { return texture2D(niri_screen_prev, (uv - niri_region.xy) / niri_region.zw); }
++
++uniform sampler2D niri_buffer; // dedicated feedback buffer (last frame); == niri_prev if no global_buffer
++vec4 tex2D_buffer(vec2 uv) { return texture2D(niri_buffer, (uv - niri_region.xy) / niri_region.zw); }
++
++// User defines: vec4 global_color(vec3 coord);
++// User MAY define: vec4 global_buffer(vec3 coord);  // returns what to store in niri_buffer
+diff --git a/src/render_helpers/shaders/mod.rs b/src/render_helpers/shaders/mod.rs
+index 7be9b159..2e3c9875 100644
+--- a/src/render_helpers/shaders/mod.rs
++++ b/src/render_helpers/shaders/mod.rs
+@@ -1,10 +1,13 @@
+ use std::cell::RefCell;
+ 
+ use glam::Mat3;
++use smithay::backend::allocator::Fourcc;
+ use smithay::backend::renderer::gles::{
+-    GlesError, GlesFrame, GlesRenderer, GlesTexProgram, Uniform, UniformName, UniformType,
+-    UniformValue,
++    GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformName,
++    UniformType, UniformValue,
+ };
++use smithay::backend::renderer::ImportMem;
++use smithay::utils::Size;
+ 
+ use super::renderer::NiriRenderer;
+ use super::shader_element::ShaderProgram;
+@@ -21,6 +24,11 @@ pub struct Shaders {
+     pub custom_resize: RefCell<Option<ShaderProgram>>,
+     pub custom_close: RefCell<Option<ShaderProgram>>,
+     pub custom_open: RefCell<Option<ShaderProgram>>,
++    pub custom_global: RefCell<Option<ShaderProgram>>,
++    pub custom_global_buffer: RefCell<Option<ShaderProgram>>,
++    /// 1×1 transparent-black texture used to seed a feedback shader's first-frame niri_prev /
++    /// niri_buffer (an "empty feedback buffer"), instead of ingesting the live screen.
++    pub black_texture: GlesTexture,
+ }
+ 
+ #[derive(Debug, Clone, Copy)]
+@@ -30,6 +38,8 @@ pub enum ProgramType {
+     Resize,
+     Close,
+     Open,
++    Global,
++    GlobalBuffer,
+ }
+ 
+ impl Shaders {
+@@ -148,6 +158,11 @@ impl Shaders {
+             })
+             .ok();
+ 
++        // 1×1 transparent black; sampled (clamped) it returns black for every uv at any size.
++        let black_texture = renderer
++            .import_memory(&[0u8, 0, 0, 0], Fourcc::Abgr8888, Size::from((1, 1)), false)
++            .expect("importing a 1x1 black texture must not fail");
++
+         Self {
+             border,
+             shadow,
+@@ -159,6 +174,9 @@ impl Shaders {
+             custom_resize: RefCell::new(None),
+             custom_close: RefCell::new(None),
+             custom_open: RefCell::new(None),
++            custom_global: RefCell::new(None),
++            custom_global_buffer: RefCell::new(None),
++            black_texture,
+         }
+     }
+ 
+@@ -196,6 +214,20 @@ impl Shaders {
+         self.custom_open.replace(program)
+     }
+ 
++    pub fn replace_custom_global_program(
++        &self,
++        program: Option<ShaderProgram>,
++    ) -> Option<ShaderProgram> {
++        self.custom_global.replace(program)
++    }
++
++    pub fn replace_custom_global_buffer_program(
++        &self,
++        program: Option<ShaderProgram>,
++    ) -> Option<ShaderProgram> {
++        self.custom_global_buffer.replace(program)
++    }
++
+     pub fn program(&self, program: ProgramType) -> Option<ShaderProgram> {
+         match program {
+             ProgramType::Border => self.border.clone(),
+@@ -207,6 +239,8 @@ impl Shaders {
+                 .or_else(|| self.resize.clone()),
+             ProgramType::Close => self.custom_close.borrow().clone(),
+             ProgramType::Open => self.custom_open.borrow().clone(),
++            ProgramType::Global => self.custom_global.borrow().clone(),
++            ProgramType::GlobalBuffer => self.custom_global_buffer.borrow().clone(),
+         }
+     }
+ }
+@@ -353,6 +387,96 @@ pub fn set_custom_open_program(renderer: &mut GlesRenderer, src: Option<&str>) {
+     }
+ }
+ 
++fn compile_global_program(
++    renderer: &mut GlesRenderer,
++    src: &str,
++    hyprland: bool,
++) -> Result<ShaderProgram, GlesError> {
++    let mut program = if hyprland {
++        include_str!("global_hypr_prelude.frag").to_string()
++    } else {
++        include_str!("global_prelude.frag").to_string()
++    };
++    program.push_str(src);
++    if !hyprland {
++        program.push_str(include_str!("global_epilogue.frag"));
++    }
++
++    ShaderProgram::compile(
++        renderer,
++        &program,
++        &[
++            UniformName::new("niri_time", UniformType::_1f),
++            UniformName::new("niri_cursor", UniformType::_2f),
++            UniformName::new("niri_region", UniformType::_4f),
++            UniformName::new("niri_output_size", UniformType::_2f),
++        ],
++        &["niri_screen", "niri_prev", "niri_screen_prev", "niri_buffer"],
++    )
++}
++
++fn compile_global_buffer_program(
++    renderer: &mut GlesRenderer,
++    src: &str,
++) -> Result<ShaderProgram, GlesError> {
++    let mut program = include_str!("global_prelude.frag").to_string();
++    program.push_str(src);
++    program.push_str(include_str!("global_buffer_epilogue.frag"));
++
++    ShaderProgram::compile(
++        renderer,
++        &program,
++        &[
++            UniformName::new("niri_time", UniformType::_1f),
++            UniformName::new("niri_cursor", UniformType::_2f),
++            UniformName::new("niri_region", UniformType::_4f),
++            UniformName::new("niri_output_size", UniformType::_2f),
++        ],
++        &["niri_screen", "niri_prev", "niri_screen_prev", "niri_buffer"],
++    )
++}
++
++pub fn set_custom_global_program(renderer: &mut GlesRenderer, src: Option<&str>, hyprland: bool) {
++    let program = if let Some(src) = src {
++        match compile_global_program(renderer, src, hyprland) {
++            Ok(program) => Some(program),
++            Err(err) => {
++                warn!("error compiling custom global shader: {err:?}");
++                return;
++            }
++        }
++    } else {
++        None
++    };
++
++    if let Some(prev) = Shaders::get(renderer).replace_custom_global_program(program) {
++        if let Err(err) = prev.destroy(renderer) {
++            warn!("error destroying previous custom global shader: {err:?}");
++        }
++    }
++
++    // Dedicated feedback buffer: compile a second program only when the source defines
++    // `global_buffer` (niri mode only; hyprland has no such function). When absent, install None
++    // so switching away from a buffer shader clears the old buffer program.
++    let buffer_program = match (src, hyprland) {
++        (Some(src), false) if src.contains("global_buffer") => {
++            match compile_global_buffer_program(renderer, src) {
++                Ok(p) => Some(p),
++                Err(err) => {
++                    warn!("error compiling global_buffer shader: {err:?}");
++                    None
++                }
++            }
++        }
++        _ => None,
++    };
++    if let Some(prev) = Shaders::get(renderer).replace_custom_global_buffer_program(buffer_program) {
++        if let Err(err) = prev.destroy(renderer) {
++            warn!("error destroying previous global_buffer shader: {err:?}");
++        }
++    }
++}
++
+ pub fn mat3_uniform(name: &str, mat: Mat3) -> Uniform<'_> {
+     Uniform::new(
+         name,

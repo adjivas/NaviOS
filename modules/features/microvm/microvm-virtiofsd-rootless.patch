@@ -1,0 +1,8 @@
+--- a/nixos-modules/microvm/virtiofsd/default.nix
++++ b/nixos-modules/microvm/virtiofsd/default.nix
+@@ -21,7 +21,6 @@
+         supervisordConfig = {
+           supervisord = {
+             nodaemon = true;
+-            user = "root";
+           };
