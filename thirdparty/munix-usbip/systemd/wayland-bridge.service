@@ -1,0 +1,13 @@
+[Unit]
+Description=Wayland VM bridge
+Requires=wayland-bridge.socket
+
+[Service]
+ExecStartPre=+/run/current-system/sw/bin/chmod 0666 /dev/dri/card0 /dev/dri/renderD128
+ExecStart=/opt/bin/wl-cross-domain-proxy --listen-fd --filter-global wp_presentation
+User=appvm
+Group=appvm
+
+StandardError=tty
+StandardOutput=tty
+TTYPath=/dev/hvc0

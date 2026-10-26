@@ -1,0 +1,5 @@
+result
+/testvm*
+/target
+/micro-activate
+.direnv/

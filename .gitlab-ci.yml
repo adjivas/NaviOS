@@ -1,0 +1,78 @@
+image: nixos/nix
+
+variables:
+  NIXOS_VERSION: "nixos-26.05-small"
+  NIX_CONFIG: "experimental-features = nix-command flakes"
+
+stages:
+  - check
+  - deploy
+
+# vulnix:
+#   stage: check
+#   artifacts:
+#     paths:
+#       - public/
+#   before_script:
+#     - nix-channel --add https://nixos.org/channels/${NIXOS_VERSION} nixos
+#     - nix-channel --update
+#     - nix-env -iA nixpkgs.vulnix
+#   script:
+#     - mkdir -p public
+#
+#     - DRV=$(nix eval --raw '.#nixosConfigurations.dream00.config.system.build.toplevel.drvPath')
+#     - vulnix "$DRV" > public/vulnix.txt || true
+
+linters:
+  stage: check
+  artifacts:
+    paths:
+      - public/
+  before_script:
+    - nix-channel --add https://nixos.org/channels/${NIXOS_VERSION} nixos
+    - nix-channel --update
+    - nix-env -iA nixpkgs.alejandra nixpkgs.deadnix nixpkgs.statix nixpkgs.flake-checker
+  script:
+    - mkdir -p public
+    - alejandra --check .
+    - statix check --config statix.toml
+    - deadnix --fail
+    # - flake-checker --fail-mode
+
+graph:
+  stage: check
+  artifacts:
+    paths:
+      - public/
+  before_script:
+    - nix-channel --add https://nixos.org/channels/${NIXOS_VERSION} nixos
+    - nix-channel --update
+    - nix-env -iA nixpkgs.nixoscope nixpkgs.graphviz nixpkgs.jq nixpkgs.gnused
+  script:
+    - mkdir -p public
+    - nix eval --json '.#nixosConfigurations.dream76.graph' > /tmp/nixos.json
+
+    - nixoscope --input /tmp/nixos.json > public/nixos-nixoscope.dot
+
+    - sed -E 's/<B><\/B><BR\/><BR\/>/<BR\/>/' public/nixos-nixoscope.dot > public/nixos-nixoscope-fixed.dot
+    - dot -Tsvg public/nixos-nixoscope-fixed.dot -o public/nixos-nixoscope.svg
+    - dot -Tpdf public/nixos-nixoscope-fixed.dot -o public/nixos-nixoscope.pdf
+
+    - nix build .#den-namespace-svg
+    - cat result > public/nixos-den-diagram.svg
+
+pages:
+  stage: deploy
+  needs:
+    # - job: vulnix
+    #   artifacts: true
+    - job: linters
+      artifacts: true
+    - job: graph
+      artifacts: true
+  script:
+    - ls -lah public
+  artifacts:
+    paths:
+      - public/
+

@@ -1,0 +1,49 @@
+#browser {
+  order: -1 !important;
+}
+
+#navigator-toolbox {
+  z-index: 9999 !important;
+}
+
+#urlbar[breakout][breakout-extend] {
+  bottom: 0 !important;
+  top: auto !important;
+}
+
+.urlbarView {
+  position: fixed !important;
+  inset: auto 0 84px 0 !important;
+}
+
+/* Move Firefox's Find Bar to the top of the browser content. */
+#findbar {
+  order: -1 !important;
+}
+/* Keep the search mode switcher in place when Firefox marks it as offscreen */
+.searchmode-switcher[offscreen] {
+  position: static !important;
+  top: auto !important;
+}
+
+/* Tabs overlayed on top of the current page */
+#TabsToolbar {
+  position: fixed !important;
+  top: auto !important;
+  bottom: 40px !important;
+  left: 0 !important;
+  right: 0 !important;
+
+  background: transparent !important;
+  z-index: 10000 !important;
+}
+#nav-bar {
+  position: fixed !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 10001 !important;
+}
+#browser {
+  margin-bottom: 40px !important;
+}
